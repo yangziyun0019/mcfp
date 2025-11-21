@@ -1,0 +1,14 @@
+name: mcfp
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch
+  - cudatoolkit
+  - numpy
+  - pip
+  - pip:
+      - omegaconf
+      - pyyaml
+      - pandas

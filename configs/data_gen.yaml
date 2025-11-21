@@ -1,0 +1,20 @@
+urdf_root: "PATH/TO/URDF"
+output_root: "PATH/TO/OUTPUT"
+
+sampling:
+  num_samples_per_robot: 100000
+  seed: 42
+
+grid:
+  type: "cartesian"
+  bounds:
+    x: [-1.0, 1.0]
+    y: [-1.0, 1.0]
+    z: [0.0, 1.5]
+  resolution:
+    x: 0.02
+    y: 0.02
+    z: 0.02
+
+logging:
+  log_dir: "logs/data_gen"
