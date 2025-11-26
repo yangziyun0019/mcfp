@@ -1,0 +1,16 @@
+logging:
+  log_dir: "logs/sim_single"
+
+data:
+  urdf_root: "D:/code/mcfp/data/urdf/rm_65_b_description/urdf"
+  capability_root: "data/capability"
+
+robot:
+  name: "rm_65_b"
+  urdf_filename: "rm_65_b_description.urdf"
+
+grid:
+  xyz_min: [-0.5, -0.5, 0.0]
+  xyz_max: [0.5, 0.5, 1.0]
+  resolution: [0.1, 0.1, 0.1]
+  samples_per_cell: 8
