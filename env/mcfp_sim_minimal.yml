@@ -10,4 +10,5 @@ dependencies:
   - pyyaml
   - matplotlib  
   - pip:
+      - pybullet
       - .

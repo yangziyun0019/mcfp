@@ -25,8 +25,10 @@ def main() -> None:
     robot_name = cfg.robot.name
     urdf_filename = cfg.robot.urdf_filename
 
+    base_link = getattr(cfg.sim, "base_link", None)
+    end_effector_link = getattr(cfg.sim, "end_effector_link", None)
+
     urdf_path = urdf_root / urdf_filename
-    # TODO: 如果后续按 robot_name 分目录，可以改成 urdf_root / robot_name / urdf_filename
     output_dir = cap_root / robot_name
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "capability_map.npz"
@@ -38,6 +40,8 @@ def main() -> None:
         urdf_path=urdf_path,
         output_path=output_path,
         grid_cfg=cfg.grid,
+        base_link=base_link,
+        end_effector_link=end_effector_link,
         logger=logger,
     )
 

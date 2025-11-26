@@ -5,12 +5,42 @@ data:
   urdf_root: "D:/code/mcfp/data/urdf/rm_65_b_description/urdf"
   capability_root: "data/capability"
 
+sim:
+  base_link: "base_link"
+  end_effector_link: "tool0"
+  
 robot:
   name: "rm_65_b"
   urdf_filename: "rm_65_b_description.urdf"
 
 grid:
-  xyz_min: [-0.5, -0.5, 0.0]
-  xyz_max: [0.5, 0.5, 1.0]
-  resolution: [0.1, 0.1, 0.1]
-  samples_per_cell: 8
+  mode: "auto"
+  resolution: 0.05
+
+  bounds_samples: 3000
+  bounds_margin: 1.1
+
+  # 如果你想手动指定边界，可以取消注释：
+  # xyz_min: [-0.6, -0.6, 0.0]
+  # xyz_max: [ 0.6,  0.6, 1.2]
+
+  orientation:
+    mode: "euler"   # 目前只支持 euler
+    # roll, pitch, yaw 的允许范围（单位：弧度）
+    min: [-3.1416, -1.5708, -3.1416]
+    max: [ 3.1416,  1.5708,  3.1416]
+    # 预留字段：目前代码里还没用到，但你以后要做姿态细分时可以直接用
+    resolution: [0.5, 0.5, 0.5]
+
+  sampling:
+    min_samples_per_cell: 8
+    max_samples_per_cell: 64
+    improvement_threshold: 1e-3
+    patience: 5
+
+  utility:
+    w_ws: 10.0
+    w_self: 3.0
+    w_lim: 2.0
+    w_man: 1.0
+
