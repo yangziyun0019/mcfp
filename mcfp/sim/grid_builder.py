@@ -398,6 +398,60 @@ def _get_position_cell_bounds(
 
     return xyz_min_cell, xyz_max_cell
 
+def _position_to_cell_index(
+    pos: np.ndarray,
+    grid_meta: Dict[str, np.ndarray],
+) -> Optional[int]:
+    """Map a 3D position to a flat cell index in the workspace grid.
+
+    This uses only the position and the 3D grid defined by bounds_min,
+    bounds_max, resolution and cell_shape in grid_meta.
+
+    Parameters
+    ----------
+    pos:
+        End-effector position in workspace coordinates, shape (3,).
+    grid_meta:
+        Workspace grid metadata as produced by _build_workspace_grid.
+
+    Returns
+    -------
+    index:
+        Flat cell index in [0, num_cells), or None if the position lies
+        outside the workspace bounds.
+    """
+    p = np.asarray(pos, dtype=np.float32).reshape(3,)
+
+    bounds_min = grid_meta["bounds_min"].astype(np.float32).reshape(3,)
+    bounds_max = grid_meta["bounds_max"].astype(np.float32).reshape(3,)
+    resolution = grid_meta["resolution"].astype(np.float32).reshape(3,)
+    cell_shape = grid_meta["cell_shape"]
+    if cell_shape.size != 3:
+        raise ValueError("[grid_builder] grid_meta.cell_shape must be a (3,) array.")
+
+    nx, ny, nz = int(cell_shape[0]), int(cell_shape[1]), int(cell_shape[2])
+
+    # Fast reject if clearly outside the AABB
+    if np.any(p < bounds_min) or np.any(p > bounds_max):
+        return None
+
+    # Compute 3D indices by flooring to the nearest lower cell boundary
+    rel = (p - bounds_min) / resolution  # in units of cell size
+    idx_float = np.floor(rel)
+    idx = idx_float.astype(int)
+
+    # Clamp to valid range to deal with numerical edge cases near bounds_max
+    idx[0] = max(0, min(idx[0], nx - 1))
+    idx[1] = max(0, min(idx[1], ny - 1))
+    idx[2] = max(0, min(idx[2], nz - 1))
+
+    ix, iy, iz = int(idx[0]), int(idx[1]), int(idx[2])
+
+    if ix < 0 or ix >= nx or iy < 0 or iy >= ny or iz < 0 or iz >= nz:
+        return None
+
+    flat_index = ix * (ny * nz) + iy * nz + iz
+    return flat_index
 
 def _position_in_cell(
     pos: np.ndarray,
@@ -491,19 +545,52 @@ def _evaluate_grid(
     grid_cfg: Any,
     logger,
 ) -> Dict[str, np.ndarray]:
-    """Sample joint space for each grid cell and compute indicators.
+    """Sample joint space globally and aggregate best indicators per workspace cell.
 
-    For each workspace cell, this function samples joint configurations
-    uniformly in joint space, computes forward kinematics, and keeps only
-    those samples whose end-effector pose lies inside the corresponding
-    workspace cell (position-wise) and satisfies the global orientation
-    limits.
+    This function performs global random sampling in joint space. For each
+    sampled configuration q, it computes forward kinematics, assigns the
+    resulting end-effector position to a workspace cell (if inside the
+    workspace AABB), and updates that cell's best configuration according
+    to the utility score u(q).
 
-    For each cell, it then evaluates the indicators g_ws, g_self,
-    g_lim, g_man and the utility u(q), and keeps the best configuration
-    q* according to the utility score.
+    Orientation is currently used only as a global filter via
+    _orientation_within_limits. Cell assignment is purely position-based
+    so that later upgrades to a 6D pose grid can be implemented by
+    extending the cell index mapping without changing the outer logic.
 
     Sampling hyperparameters and utility weights are read from grid_cfg.
+
+    Sampling behaviour
+    ------------------
+    Let num_cells be the number of workspace cells. The following
+    parameters are used:
+
+    - sampling.min_samples_per_cell (default: 8)
+        Target minimum number of *effective* samples per cell on average.
+        Used only to derive a reasonable default for the total sampling
+        budget if max_total_samples is not provided.
+
+    - sampling.max_samples_per_cell (default: 64)
+        Used only as a fallback to define max_total_samples when the
+        latter is not explicitly configured.
+
+    - sampling.max_total_samples (optional)
+        Hard upper bound on the total number of sampled configurations.
+        Default is num_cells * max_samples_per_cell.
+
+    - sampling.target_coverage (default: 0.7)
+        Fraction of cells that must have at least one valid sample
+        (i.e. a finite utility) before convergence is allowed.
+
+    - sampling.improvement_threshold (default: 1e-3)
+        Minimum required improvement in u(q) to be considered a true
+        update for a cell.
+
+    - sampling.global_patience (optional)
+        Number of *consecutive* samples without any utility improvement
+        (in any cell) after which, once target_coverage is reached,
+        sampling is stopped early. If not provided, falls back to
+        sampling.patience, and finally to 1000.
     """
     joint_limits = robot.joint_limits
     if joint_limits.ndim != 2 or joint_limits.shape[1] != 2:
@@ -513,8 +600,8 @@ def _evaluate_grid(
         )
 
     cell_centers = grid_meta["cell_centers"]
-    num_cells = cell_centers.shape[0]
-    num_joints = joint_limits.shape[0]
+    num_cells = int(cell_centers.shape[0])
+    num_joints = int(joint_limits.shape[0])
 
     # Sampling hyperparameters
     sampling_cfg = _get_subconfig(grid_cfg, "sampling")
@@ -529,133 +616,178 @@ def _evaluate_grid(
     improvement_threshold = float(
         _get_sampling_param("improvement_threshold", 1e-3)
     )
-    patience = int(_get_sampling_param("patience", 5))
 
-    if max_samples_per_cell < min_samples_per_cell:
-        logger.warning(
-            "[grid_builder] max_samples_per_cell < min_samples_per_cell; "
-            "clamping to be equal."
+    # Derive total sampling budget
+    default_max_total = num_cells * max_samples_per_cell
+    max_total_samples = int(_get_sampling_param("max_total_samples", default_max_total))
+
+    target_coverage = float(_get_sampling_param("target_coverage", 0.7))
+    target_coverage = float(max(0.0, min(target_coverage, 1.0)))
+
+    # Global patience for early stopping after coverage is reached
+    global_patience = int(
+        _get_sampling_param(
+            "global_patience",
+            _get_sampling_param("patience", 1000),
         )
-        max_samples_per_cell = min_samples_per_cell
-
-    logger.info(
-        "[grid_builder] Evaluating workspace grid with "
-        f"{num_cells} cells, min_samples_per_cell={min_samples_per_cell}, "
-        f"max_samples_per_cell={max_samples_per_cell}."
     )
 
-    # Allocate arrays for per-cell best indicators and utility
+    # How often to print progress; 0 or negative disables periodic logs
+    progress_interval = int(
+        _get_sampling_param(
+            "progress_interval",
+            max(10000, max_total_samples // 10),
+        )
+    )
+
+
+    logger.info(
+        "[grid_builder] Evaluating workspace grid with %d cells using "
+        "global sampling: max_total_samples=%d, target_coverage=%.3f, "
+        "min_samples_per_cell=%d.",
+        num_cells,
+        max_total_samples,
+        target_coverage,
+        min_samples_per_cell,
+    )
+
+    # Allocate arrays for per-cell best indicators and utility.
+    # u_all is initialised to -inf so that any first valid sample wins.
     g_ws_all = np.zeros(num_cells, dtype=np.float32)
     g_self_all = np.zeros(num_cells, dtype=np.float32)
     g_lim_all = np.zeros(num_cells, dtype=np.float32)
     g_man_all = np.zeros(num_cells, dtype=np.float32)
-    u_all = np.zeros(num_cells, dtype=np.float32)
+    u_all = np.full(num_cells, -np.inf, dtype=np.float32)
 
     # Store the best configuration and pose per cell
     q_star_all = np.zeros((num_cells, num_joints), dtype=np.float32)
     x_pos_all = np.zeros((num_cells, 3), dtype=np.float32)
     x_ori_all = np.zeros((num_cells, 4), dtype=np.float32)
 
-    for idx in range(num_cells):
-        xyz_min_cell, xyz_max_cell = _get_position_cell_bounds(idx, grid_meta)
+    # Per-cell sample counts (for diagnostics and potential future use)
+    sample_counts = np.zeros(num_cells, dtype=np.int32)
 
-        best_u = -np.inf
-        best_g_ws = 0.0
-        best_g_self = 0.0
-        best_g_lim = 0.0
-        best_g_man = 0.0
-        best_q: Optional[np.ndarray] = None
-        best_pos: Optional[np.ndarray] = None
-        best_ori: Optional[np.ndarray] = None
+    # Global convergence bookkeeping
+    no_improve_streak = 0
 
-        no_improve_count = 0
-        valid_samples = 0
+    bounds_min = grid_meta["bounds_min"].astype(np.float32).reshape(3,)
+    bounds_max = grid_meta["bounds_max"].astype(np.float32).reshape(3,)
 
-        logger.debug(
-            f"[grid_builder] Evaluating cell {idx} / {num_cells} "
-            f"at center {cell_centers[idx]}."
-        )
+    logger.info(
+        "[grid_builder] Workspace bounds for evaluation: xyz_min=%s, xyz_max=%s.",
+        bounds_min,
+        bounds_max,
+    )
 
-        for it in range(1, max_samples_per_cell + 1):
-            q = _sample_random_q(joint_limits)
+    for it in range(1, max_total_samples + 1):
+        q = _sample_random_q(joint_limits)
 
-            # Forward kinematics to obtain pose
-            try:
-                pos, ori = robot.fk(q)
-            except Exception as exc:
-                if it == 1:
-                    logger.debug(
-                        "[grid_builder] FK failed in cell "
-                        f"{idx} on first sample: {exc}."
-                    )
-                continue
-
-            if pos is None or ori is None:
-                continue
-
-            pos_arr = np.asarray(pos, dtype=np.float32).reshape(3,)
-            ori_arr = np.asarray(ori, dtype=np.float32).reshape(4,)
-
-            # Check whether the pose belongs to this cell
-            if not _position_in_cell(pos_arr, xyz_min_cell, xyz_max_cell):
-                continue
-
-            if not _orientation_within_limits(ori_arr, grid_cfg):
-                continue
-
-            valid_samples += 1
-
-            # Now evaluate indicators for this (r, q)
-            pose_in_cell = True
-            g_ws_val = compute_g_ws(q, pose_in_cell, robot, self_checker)
-            g_self_val = compute_g_self(q, self_checker)
-            g_lim_val = compute_g_lim(q, joint_limits)
-            g_man_val = compute_g_man(q, robot)
-
-            u_val = _compute_utility(
-                g_ws=g_ws_val,
-                g_self=g_self_val,
-                g_lim=g_lim_val,
-                g_man=g_man_val,
-                grid_cfg=grid_cfg,
-            )
-
-            if u_val > best_u + improvement_threshold:
-                best_u = u_val
-                best_g_ws = g_ws_val
-                best_g_self = g_self_val
-                best_g_lim = g_lim_val
-                best_g_man = g_man_val
-                best_q = q.copy()
-                best_pos = pos_arr.copy()
-                best_ori = ori_arr.copy()
-                no_improve_count = 0
-            else:
-                no_improve_count += 1
-
-            # Only allow early stopping after we have enough valid samples
-            if (
-                valid_samples >= min_samples_per_cell
-                and no_improve_count >= patience
-            ):
-                break
-
-        if not np.isfinite(best_u) or best_q is None:
-            logger.debug(
-                f"[grid_builder] No valid samples found for cell {idx}; "
-                "leaving indicators at zero."
-            )
+        # Forward kinematics to obtain pose
+        try:
+            pos, ori = robot.fk(q)
+        except Exception as exc:
+            if it == 1:
+                logger.debug(
+                    "[grid_builder] FK failed on first sample: %s.",
+                    exc,
+                )
             continue
 
-        g_ws_all[idx] = float(best_g_ws)
-        g_self_all[idx] = float(best_g_self)
-        g_lim_all[idx] = float(best_g_lim)
-        g_man_all[idx] = float(best_g_man)
-        u_all[idx] = float(best_u)
+        if pos is None or ori is None:
+            continue
 
-        q_star_all[idx] = best_q
-        x_pos_all[idx] = best_pos
-        x_ori_all[idx] = best_ori
+        pos_arr = np.asarray(pos, dtype=np.float32).reshape(3,)
+        ori_arr = np.asarray(ori, dtype=np.float32).reshape(4,)
+
+        # Reject samples outside workspace AABB
+        if np.any(pos_arr < bounds_min) or np.any(pos_arr > bounds_max):
+            continue
+
+        # Optional global orientation filter
+        if not _orientation_within_limits(ori_arr, grid_cfg):
+            continue
+
+        # Map position to a workspace cell
+        cell_index = _position_to_cell_index(pos_arr, grid_meta)
+        if cell_index is None:
+            continue
+
+        sample_counts[cell_index] += 1
+
+        # Evaluate indicators for this (r, q)
+        pose_in_cell = True
+        g_ws_val = compute_g_ws(q, pose_in_cell, robot, self_checker)
+        g_self_val = compute_g_self(q, self_checker)
+        g_lim_val = compute_g_lim(q, joint_limits)
+        g_man_val = compute_g_man(q, robot)
+
+        u_val = _compute_utility(
+            g_ws=g_ws_val,
+            g_self=g_self_val,
+            g_lim=g_lim_val,
+            g_man=g_man_val,
+            grid_cfg=grid_cfg,
+        )
+
+        prev_u = u_all[cell_index]
+        improved = False
+
+        if not np.isfinite(prev_u) or (u_val > prev_u + improvement_threshold):
+            # First valid sample for this cell or significant improvement
+            u_all[cell_index] = float(u_val)
+            g_ws_all[cell_index] = float(g_ws_val)
+            g_self_all[cell_index] = float(g_self_val)
+            g_lim_all[cell_index] = float(g_lim_val)
+            g_man_all[cell_index] = float(g_man_val)
+            q_star_all[cell_index] = q.astype(np.float32)
+            x_pos_all[cell_index] = pos_arr
+            x_ori_all[cell_index] = ori_arr
+            improved = True
+
+        if improved:
+            no_improve_streak = 0
+        else:
+            no_improve_streak += 1
+
+        # Convergence check
+        valid_cells = int(np.count_nonzero(np.isfinite(u_all)))
+        coverage = valid_cells / max(num_cells, 1)
+
+        if progress_interval > 0 and (it % progress_interval == 0):
+            logger.info(
+                "[grid_builder] Sample %d / %d, coverage=%.3f (%d cells), "
+                "no_improve_streak=%d.",
+                it,
+                max_total_samples,
+                coverage,
+                valid_cells,
+                no_improve_streak,
+            )
+
+
+        if coverage >= target_coverage and no_improve_streak >= global_patience:
+            logger.info(
+                "[grid_builder] Early stopping at sample %d: "
+                "coverage=%.3f (%d cells), no_improve_streak=%d.",
+                it,
+                coverage,
+                valid_cells,
+                no_improve_streak,
+            )
+            break
+
+    # Finalise: cells that never received a valid sample keep all-zero
+    # indicators, and their utility is set to 0 for downstream convenience.
+    invalid_mask = ~np.isfinite(u_all)
+    num_invalid = int(np.count_nonzero(invalid_mask))
+
+    if num_invalid > 0:
+        logger.info(
+            "[grid_builder] %d cells received no valid samples; "
+            "their indicators remain zero and utility is set to 0.",
+            num_invalid,
+        )
+        u_all[invalid_mask] = 0.0
 
     cap_data = {
         "cell_centers": cell_centers,

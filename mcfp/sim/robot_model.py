@@ -59,6 +59,9 @@ class RobotModel:
         self._joint_names: List[str] = []
         self._joint_limits: List[Tuple[float, float]] = []
 
+        # store kinematic edges between links parsed from URDF
+        self._link_edges: List[Tuple[str, str]] = []
+
         self._parse_urdf_joints()
 
         if not self._joint_names:
@@ -114,6 +117,16 @@ class RobotModel:
         if not self._joint_limits:
             return np.zeros((0, 2), dtype=float)
         return np.asarray(self._joint_limits, dtype=float)
+    
+    @property
+    def link_edges(self) -> List[Tuple[str, str]]:
+        """Return list of (parent_link, child_link) edges from URDF.
+
+        The list follows the order of actuated joints and can be used
+        for simple kinematic chain visualisation.
+        """
+        return list(self._link_edges)
+
 
     # ------------------------------------------------------------------
     # Kinematics API stubs
@@ -249,6 +262,7 @@ class RobotModel:
 
         self._joint_names.clear()
         self._joint_limits.clear()
+        self._link_edges.clear()
 
         # Default ranges: rotational (rad) and prismatic (m)
         default_rot_lower = -np.pi
@@ -265,6 +279,14 @@ class RobotModel:
                     "[RobotModel] Encountered joint without a name in URDF "
                     f"(type='{j_type}'). This is not supported."
                 )
+            
+            parent_elem = joint.find("parent")
+            child_elem = joint.find("child")
+            if parent_elem is not None and child_elem is not None:
+                parent_link = parent_elem.attrib.get("link")
+                child_link = child_elem.attrib.get("link")
+                if parent_link and child_link:
+                    self._link_edges.append((parent_link, child_link))
 
             limit_elem = joint.find("limit")
             if limit_elem is not None:

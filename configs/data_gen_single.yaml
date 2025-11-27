@@ -15,9 +15,9 @@ robot:
 
 grid:
   mode: "auto"
-  resolution: 0.05
+  resolution: 0.08
 
-  bounds_samples: 3000
+  bounds_samples: 5000
   bounds_margin: 1.1
 
   # 如果你想手动指定边界，可以取消注释：
@@ -29,18 +29,21 @@ grid:
     # roll, pitch, yaw 的允许范围（单位：弧度）
     min: [-3.1416, -1.5708, -3.1416]
     max: [ 3.1416,  1.5708,  3.1416]
-    # 预留字段：目前代码里还没用到，但你以后要做姿态细分时可以直接用
+    # 预留字段：目前代码里还没用到，做姿态细分时可以直接用
     resolution: [0.5, 0.5, 0.5]
 
   sampling:
-    min_samples_per_cell: 8
-    max_samples_per_cell: 64
-    improvement_threshold: 1e-3
-    patience: 5
+  min_samples_per_cell: 8
+  max_samples_per_cell: 64
+  max_total_samples: 500000     # 举例
+  target_coverage: 0.8          # 覆盖 70% cell 才允许收敛
+  improvement_threshold: 1e-3
+  global_patience: 500          # 收敛后连续 500 个样本没提升就停
+  progress_interval: 20000   # 每 2 万个样本打印一次
 
   utility:
-    w_ws: 10.0
-    w_self: 3.0
-    w_lim: 2.0
-    w_man: 1.0
+    w_ws: 1.0
+    w_self: 0.0
+    w_lim: 0.0
+    w_man: 8.0
 

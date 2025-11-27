@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -75,42 +75,103 @@ def _plot_workspace_box(ax, xyz_min: np.ndarray, xyz_max: np.ndarray) -> None:
     ax.add_collection3d(lc)
 
 
-def _plot_robot_points(
-    ax,
-    robot: RobotModel,
-    q: np.ndarray,
-    color: str = "black",
-    size: float = 15.0,
-) -> np.ndarray:
-    """Plot robot link positions as points and a simple skeleton line.
+def _plot_robot(ax, robot: RobotModel, q_vis: np.ndarray) -> np.ndarray:
+    """Plot a simple kinematic skeleton of the robot.
+
+    Prefer URDF link_edges if available. If not, fall back to a
+    heuristic chain built by sorting link names such as 'Link1' ... 'Link6'.
 
     Returns
     -------
-    pts:
-        Array of shape (L, 3) with link positions. Empty array if nothing is plotted.
+    points:
+        Array of shape (N, 3) containing all link positions that were
+        actually plotted. Empty array if nothing was drawn.
     """
-    poses = robot.link_poses(q)
-    print("[DEBUG] link_poses count:", len(poses), "names:", list(poses.keys()))
+    poses = robot.link_poses(q_vis)
+    if poses is None or not poses:
+        return np.zeros((0, 3), dtype=float)
 
-    poses = robot.link_poses(q)
-    if not poses:
-        return np.zeros((0, 3), dtype=np.float32)
+    plotted_points: list[np.ndarray] = []
 
-    positions = []
-    for pos, _ori in poses.values():
-        positions.append(np.asarray(pos, dtype=np.float32).reshape(3,))
+    
+    edges = getattr(robot, "link_edges", None)
+    if edges:
+        for parent_link, child_link in edges:
+            if parent_link not in poses or child_link not in poses:
+                continue
 
-    pts = np.stack(positions, axis=0)
+            parent_pos, _ = poses[parent_link]
+            child_pos, _ = poses[child_link]
 
-    ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], s=size, c=color, depthshade=True)
+            p = np.asarray(parent_pos, dtype=float).reshape(3,)
+            c = np.asarray(child_pos, dtype=float).reshape(3,)
 
-    segments = [(pts[i], pts[i + 1]) for i in range(len(pts) - 1)]
-    lc = Line3DCollection(segments, colors=color, linewidths=2.0, alpha=0.9)
-    ax.add_collection3d(lc)
+            ax.plot(
+                [p[0], c[0]],
+                [p[1], c[1]],
+                [p[2], c[2]],
+                linewidth=2.5,
+                color="k",
+                alpha=0.9,
+            )
+            ax.scatter([c[0]], [c[1]], [c[2]], s=18, color="k")
+            plotted_points.append(p)
+            plotted_points.append(c)
+    else:
 
-    return pts
+        import re
+
+        link_names = list(poses.keys())
+
+        def sort_key(name: str):
+            """Sort by trailing integer if present, otherwise by name."""
+            m = re.search(r"(\d+)$", name)
+            if m:
+                return (0, int(m.group(1)))
+            return (1, name)
+
+        link_names.sort(key=sort_key)
 
 
+        for i in range(len(link_names) - 1):
+            parent_link = link_names[i]
+            child_link = link_names[i + 1]
+
+            parent_pos, _ = poses[parent_link]
+            child_pos, _ = poses[child_link]
+
+            p = np.asarray(parent_pos, dtype=float).reshape(3,)
+            c = np.asarray(child_pos, dtype=float).reshape(3,)
+
+            ax.plot(
+                [p[0], c[0]],
+                [p[1], c[1]],
+                [p[2], c[2]],
+                linewidth=2.5,
+                color="k",
+                alpha=0.9,
+            )
+            ax.scatter([c[0]], [c[1]], [c[2]], s=18, color="k")
+            plotted_points.append(p)
+            plotted_points.append(c)
+
+    if robot.end_effector_link is not None and robot.end_effector_link in poses:
+        ee_pos, _ = poses[robot.end_effector_link]
+        ee_pos = np.asarray(ee_pos, dtype=float).reshape(3,)
+        ax.scatter(
+            [ee_pos[0]],
+            [ee_pos[1]],
+            [ee_pos[2]],
+            s=40,
+            marker="*",
+            color="r",
+        )
+        plotted_points.append(ee_pos)
+
+    if not plotted_points:
+        return np.zeros((0, 3), dtype=float)
+
+    return np.vstack(plotted_points)
 
 
 def plot_capability_with_robot(
@@ -151,38 +212,61 @@ def plot_capability_with_robot(
     logger.info("[capability_viz] Loading capability map from %s", cap_path)
     cap_data = load_capability_map(cap_path)
 
-    centers = np.asarray(cap_data["cell_centers"], dtype=np.float32)
-    values = np.asarray(cap_data[value_key], dtype=np.float32)
+    # Use best-sample positions if available; otherwise fall back to cell centers
+    if "x_pos" in cap_data:
+        positions = np.asarray(cap_data["x_pos"], dtype=np.float32)
+        logger.info(
+            "[capability_viz] Using x_pos as point locations for visualisation."
+        )
+    else:
+        positions = np.asarray(cap_data["cell_centers"], dtype=np.float32)
+        logger.info(
+            "[capability_viz] x_pos not found; using cell_centers for visualisation."
+        )
 
+    values = np.asarray(cap_data[value_key], dtype=np.float32)
+    g_ws = (
+        np.asarray(cap_data.get("g_ws", None), dtype=np.float32)
+        if "g_ws" in cap_data
+        else None
+    )
+
+    num_cells = positions.shape[0]
     logger.info(
         "[capability_viz] Loaded %d cells; plotting with value_key='%s'.",
-        centers.shape[0],
+        num_cells,
         value_key,
     )
 
-        # ----- filter cells by value threshold -----
-    threshold = 1.0  # 只保留得分 >= 5 的 cell
-    mask = values >= threshold
+    # ----- filter cells by validity and value threshold -----
+    # Valid cells: have a finite value, and (if g_ws is present) g_ws > 0
+    valid_mask = np.isfinite(values)
+    if g_ws is not None:
+        valid_mask &= g_ws > 0.0
 
-    if not np.any(mask):
+    # >>> 这里是你要改的“只显示大于多少分数” <<<
+    value_threshold = 0  # keep cells with value >= this; adjust as needed
+    valid_mask &= values >= value_threshold
+
+    if not np.any(valid_mask):
         logger.warning(
-            "[capability_viz] No cells with %s >= %.3f; nothing to plot.",
+            "[capability_viz] No cells with valid %s >= %.3f; nothing to plot.",
             value_key,
-            threshold,
+            value_threshold,
         )
         return
 
-    centers = centers[mask]
-    values = values[mask]
+    positions = positions[valid_mask]
+    values = values[valid_mask]
 
     logger.info(
-        "[capability_viz] After thresholding (%s >= %.3f), kept %d cells.",
+        "[capability_viz] After masking and thresholding (%s >= %.3f), kept %d cells.",
         value_key,
-        threshold,
-        centers.shape[0],
+        value_threshold,
+        positions.shape[0],
     )
-    # -------------------------------------------
-    # Workspace bounds
+
+    # Workspace bounds (still based on grid meta)
     bounds = _compute_workspace_bounds(cap_data)
     xyz_min, xyz_max = bounds[0], bounds[1]
     logger.info(
@@ -204,10 +288,8 @@ def plot_capability_with_robot(
     if joint_limits.size == 0:
         q_plot = np.zeros((robot.num_joints,), dtype=np.float32)
     else:
-        lows = joint_limits[:, 0]
-        highs = joint_limits[:, 1]
-        q_plot = 0.5 * (lows + highs)
-        q_plot = q_plot.astype(np.float32)
+        # Example pose for visualisation (manually chosen)
+        q_plot = np.array([-0.5, -0.5, 0.6, 0.5, -0.3, -0.5], dtype=np.float32)
 
     # Prepare figure
     fig = plt.figure(figsize=(8, 7))
@@ -217,14 +299,14 @@ def plot_capability_with_robot(
     ax.set_zlabel("Z [m]")
     ax.set_title(f"Capability map coloured by '{value_key}'")
 
-    # Plot capability cells coloured by the selected scalar value
+    # Plot capability points coloured by the selected scalar value
     sc = ax.scatter(
-        centers[:, 0],
-        centers[:, 1],
-        centers[:, 2],
+        positions[:, 0],
+        positions[:, 1],
+        positions[:, 2],
         c=values,
-        cmap="viridis",
-        s=5.0,
+        cmap="plasma",   # 更高对比度，从紫→黄
+        s=8.0,
         alpha=0.9,
         depthshade=True,
     )
@@ -233,10 +315,16 @@ def plot_capability_with_robot(
     # Plot workspace AABB
     _plot_workspace_box(ax, xyz_min, xyz_max)
 
-    # Plot robot links for a simple pose
-    robot_pts = _plot_robot_points(ax, robot, q_plot, color="black", size=18.0)
+    # Debug: print link_edges to check URDF parsing
+    logger.info(
+        "[capability_viz] Robot link_edges: %s",
+        getattr(robot, "link_edges", None),
+    )
 
-    # 如果机器人点超出 workspace，把范围扩展到同时包括两者
+    # Plot robot links for a simple pose
+    robot_pts = _plot_robot(ax, robot, q_plot)
+
+    # Extend axes to include both workspace and robot geometry, with padding
     if robot_pts.size > 0:
         r_min = robot_pts.min(axis=0)
         r_max = robot_pts.max(axis=0)
@@ -247,12 +335,14 @@ def plot_capability_with_robot(
         all_min = xyz_min
         all_max = xyz_max
 
-    ax.set_xlim(all_min[0], all_max[0])
-    ax.set_ylim(all_min[1], all_max[1])
-    ax.set_zlim(all_min[2], all_max[2])
-
+    span = all_max - all_min
+    padding = 0.2 * span  # 让范围再大一点
+    ax.set_xlim(all_min[0] - padding[0], all_max[0] + padding[0])
+    ax.set_ylim(all_min[1] - padding[1], all_max[1] + padding[1])
+    ax.set_zlim(all_min[2] - padding[2], all_max[2] + padding[2])
 
     ax.view_init(elev=30.0, azim=45.0)
 
     plt.tight_layout()
     plt.show()
+
