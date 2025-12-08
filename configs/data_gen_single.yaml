@@ -1,3 +1,5 @@
+# configs/data_gen_single.yaml
+
 logging:
   log_dir: "logs/sim_single"
 
@@ -8,42 +10,47 @@ data:
 sim:
   base_link: "base_link"
   end_effector_link: "tool0"
-  
+
+  # Self-collision parameters
+  # safe_clearance now acts as the normalization denominator (d_max) for g_self
+  # and implies the "safety airbag" thickness.
+  self_collision:
+    safe_clearance: 0.05   # [m], surface distance for g_self = 1.0
+
+  # Indicator scaling parameters
+  indicators:
+    k_man: 1.0             # scale for manipulability
+    k_sigma: 0.10          # scale for singularity distance
+
 robot:
   name: "rm_65_b"
   urdf_filename: "rm_65_b_description.urdf"
 
 grid:
+  # Workspace bounding box mode: "auto" (scouting) or "manual"
   mode: "auto"
+
+  # Voxel resolution [m]
   resolution: 0.08
 
-  bounds_samples: 5000
-  bounds_margin: 1.1
+  # Phase 1: Scouting parameters
+  bounds_samples: 50000     # fast FK samples to find AABB
+  bounds_margin: 1.1        # expand AABB by 10%
 
-  # 如果你想手动指定边界，可以取消注释：
-  # xyz_min: [-0.6, -0.6, 0.0]
-  # xyz_max: [ 0.6,  0.6, 1.2]
-
-  orientation:
-    mode: "euler"   # 目前只支持 euler
-    # roll, pitch, yaw 的允许范围（单位：弧度）
-    min: [-3.1416, -1.5708, -3.1416]
-    max: [ 3.1416,  1.5708,  3.1416]
-    # 预留字段：目前代码里还没用到，做姿态细分时可以直接用
-    resolution: [0.5, 0.5, 0.5]
-
+  # Phase 2: Surveying (Sampling) parameters
   sampling:
-  min_samples_per_cell: 8
-  max_samples_per_cell: 64
-  max_total_samples: 500000     # 举例
-  target_coverage: 0.8          # 覆盖 70% cell 才允许收敛
-  improvement_threshold: 1e-3
-  global_patience: 500          # 收敛后连续 500 个样本没提升就停
-  progress_interval: 20000   # 每 2 万个样本打印一次
+    max_total_samples: 2000000     # Hard cap budget
+    target_coverage: 0.4          # Minimum % of valid cells before considering stop
+    
+    # Event-based Convergence Criteria
+    improvement_threshold: 0.01    # 1% improvement in g_man counts as a "Significant Event"
+    stability_window: 10000        # Sliding window size to measure update rate
+    min_update_rate: 0.005        # Stop if < 0.05% of samples in window are significant
+    
+    progress_interval: 10000       # Log frequency
 
+  # Heuristic weights for selecting the representative q* (visualization only)
+  # Not used for aggregation logic.
   utility:
-    w_ws: 1.0
-    w_self: 0.0
-    w_lim: 0.0
-    w_man: 8.0
-
+    w_man: 1.0
+    w_self: 1.0

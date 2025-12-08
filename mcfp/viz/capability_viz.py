@@ -181,6 +181,7 @@ def plot_capability_with_robot(
     end_effector_link: Optional[str] = None,
     value_key: str = "u",
     log_dir: Optional[Path] = None,
+    custom_values: Optional[np.ndarray] = None,
 ) -> None:
     """Visualize capability map together with a static robot pose.
 
@@ -195,10 +196,15 @@ def plot_capability_with_robot(
     end_effector_link:
         Optional end-effector link name for RobotModel.
     value_key:
-        Which scalar field to use for colouring workspace cells.
-        Typical choices: "u", "g_ws", "g_self", "g_lim", "g_man".
+        Which scalar field to use for colouring workspace cells when
+        custom_values is None. Typical choices: "u", "g_ws",
+        "g_self", "g_self_qstar", "g_lim", "g_man".
     log_dir:
         Directory for log files. If None, logging is disabled.
+    custom_values:
+        Optional array of scalar values to use for colouring workspace
+        cells. If provided, it must have length equal to the number of
+        cells in the capability map and will override value_key.
     """
     logger_name = "mcfp.viz.capability"
     if log_dir is not None:
@@ -224,7 +230,27 @@ def plot_capability_with_robot(
             "[capability_viz] x_pos not found; using cell_centers for visualisation."
         )
 
-    values = np.asarray(cap_data[value_key], dtype=np.float32)
+    # Decide which scalar field to use
+    if custom_values is not None:
+        values = np.asarray(custom_values, dtype=np.float32).reshape(-1)
+        logger.info(
+            "[capability_viz] Using custom_values for visualisation (len=%d).",
+            values.shape[0],
+        )
+        if values.shape[0] != positions.shape[0]:
+            raise ValueError(
+                f"[capability_viz] custom_values has length {values.shape[0]}, "
+                f"but positions has {positions.shape[0]} cells."
+            )
+        value_name_for_log = "custom"
+    else:
+        if value_key not in cap_data:
+            raise KeyError(
+                f"[capability_viz] value_key='{value_key}' not found in capability map."
+            )
+        values = np.asarray(cap_data[value_key], dtype=np.float32)
+        value_name_for_log = value_key
+
     g_ws = (
         np.asarray(cap_data.get("g_ws", None), dtype=np.float32)
         if "g_ws" in cap_data
@@ -233,9 +259,9 @@ def plot_capability_with_robot(
 
     num_cells = positions.shape[0]
     logger.info(
-        "[capability_viz] Loaded %d cells; plotting with value_key='%s'.",
+        "[capability_viz] Loaded %d cells; plotting with value='%s'.",
         num_cells,
-        value_key,
+        value_name_for_log,
     )
 
     # ----- filter cells by validity and value threshold -----
@@ -244,14 +270,14 @@ def plot_capability_with_robot(
     if g_ws is not None:
         valid_mask &= g_ws > 0.0
 
-    # >>> 这里是你要改的“只显示大于多少分数” <<<
-    value_threshold = 0  # keep cells with value >= this; adjust as needed
+    # Simple value threshold: keep cells with value >= this
+    value_threshold = 0.0
     valid_mask &= values >= value_threshold
 
     if not np.any(valid_mask):
         logger.warning(
             "[capability_viz] No cells with valid %s >= %.3f; nothing to plot.",
-            value_key,
+            value_name_for_log,
             value_threshold,
         )
         return
@@ -261,7 +287,7 @@ def plot_capability_with_robot(
 
     logger.info(
         "[capability_viz] After masking and thresholding (%s >= %.3f), kept %d cells.",
-        value_key,
+        value_name_for_log,
         value_threshold,
         positions.shape[0],
     )
@@ -278,53 +304,46 @@ def plot_capability_with_robot(
     # Construct robot model and pick a simple joint configuration
     logger.info("[capability_viz] Loading robot from URDF: %s", urdf_path)
     robot = RobotModel(
-        urdf_path=urdf_path,
+        urdf_path=str(urdf_path),
         logger=logger,
         base_link=base_link,
         end_effector_link=end_effector_link,
     )
 
-    joint_limits = robot.joint_limits
-    if joint_limits.size == 0:
-        q_plot = np.zeros((robot.num_joints,), dtype=np.float32)
-    else:
-        # Example pose for visualisation (manually chosen)
-        q_plot = np.array([-0.5, -0.5, 0.6, 0.5, -0.3, -0.5], dtype=np.float32)
+    q_plot = np.zeros(robot.num_joints, dtype=float)
+    logger.info(
+        "[capability_viz] Plotting robot at q=%s (zeros configuration).",
+        q_plot,
+    )
 
-    # Prepare figure
-    fig = plt.figure(figsize=(8, 7))
+    fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111, projection="3d")
-    ax.set_xlabel("X [m]")
-    ax.set_ylabel("Y [m]")
-    ax.set_zlabel("Z [m]")
-    ax.set_title(f"Capability map coloured by '{value_key}'")
 
-    # Plot capability points coloured by the selected scalar value
+    # Scatter plot of capability values
     sc = ax.scatter(
         positions[:, 0],
         positions[:, 1],
         positions[:, 2],
         c=values,
-        cmap="plasma",   # 更高对比度，从紫→黄
+        cmap="plasma",
         s=8.0,
         alpha=0.9,
-        depthshade=True,
     )
-    fig.colorbar(sc, ax=ax, shrink=0.8, label=value_key)
+    cbar = fig.colorbar(sc, ax=ax, shrink=0.7)
+    cbar.set_label(value_name_for_log)
 
-    # Plot workspace AABB
+    # Plot the robot skeleton
+    _plot_robot_skeleton(ax, robot, q_plot)
+
+    # Draw workspace bounding box
     _plot_workspace_box(ax, xyz_min, xyz_max)
 
-    # Debug: print link_edges to check URDF parsing
-    logger.info(
-        "[capability_viz] Robot link_edges: %s",
-        getattr(robot, "link_edges", None),
-    )
-
-    # Plot robot links for a simple pose
-    robot_pts = _plot_robot(ax, robot, q_plot)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
 
     # Extend axes to include both workspace and robot geometry, with padding
+    robot_pts = _collect_robot_points(robot, q_plot)
     if robot_pts.size > 0:
         r_min = robot_pts.min(axis=0)
         r_max = robot_pts.max(axis=0)
@@ -336,7 +355,7 @@ def plot_capability_with_robot(
         all_max = xyz_max
 
     span = all_max - all_min
-    padding = 0.2 * span  # 让范围再大一点
+    padding = 0.2 * span
     ax.set_xlim(all_min[0] - padding[0], all_max[0] + padding[0])
     ax.set_ylim(all_min[1] - padding[1], all_max[1] + padding[1])
     ax.set_zlim(all_min[2] - padding[2], all_max[2] + padding[2])
@@ -345,4 +364,57 @@ def plot_capability_with_robot(
 
     plt.tight_layout()
     plt.show()
+
+def _plot_robot_skeleton(
+    ax: plt.Axes,
+    robot: RobotModel,
+    q: np.ndarray,
+) -> None:
+    """Plot a simple placeholder for the robot skeleton.
+
+    This stub intentionally does nothing. It keeps the visualisation
+    pipeline simple and avoids hard dependencies on the internal robot
+    representation. The workspace point cloud is still shown correctly.
+
+    Parameters
+    ----------
+    ax : matplotlib 3D axes
+        Target axes for drawing.
+    robot : RobotModel
+        Robot model instance (currently unused).
+    q : np.ndarray
+        Joint configuration used for plotting (currently unused).
+    """
+    # If you later want a real skeleton, implement it here by querying
+    # link positions from the kinematics backend and drawing line
+    # segments between successive links.
+    return
+
+
+def _collect_robot_points(
+    robot: RobotModel,
+    q: np.ndarray,
+) -> np.ndarray:
+    """Collect robot points for axis scaling.
+
+    This stub returns an empty array, so axis limits will be determined
+    purely by the workspace bounds. It is sufficient for debugging
+    capability fields.
+
+    Parameters
+    ----------
+    robot : RobotModel
+        Robot model instance (currently unused).
+    q : np.ndarray
+        Joint configuration used for plotting (currently unused).
+
+    Returns
+    -------
+    pts : np.ndarray
+        Array of shape (0, 3). A non-empty implementation could return
+        link frame origins for better axis scaling.
+    """
+    return np.empty((0, 3), dtype=float)
+
+
 

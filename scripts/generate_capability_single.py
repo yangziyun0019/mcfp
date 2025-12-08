@@ -1,3 +1,4 @@
+# scripts/generate_capability_single.py
 """Entry script for generating a capability map for a single robot URDF."""
 
 from __future__ import annotations
@@ -11,17 +12,21 @@ from mcfp.sim.grid_builder import generate_capability_for_robot
 
 def main() -> None:
     """Main entry point for single-URDF capability map generation."""
+    # Load YAML configuration
     cfg = load_config("configs/data_gen_single.yaml")
 
+    # Logger initialised from config
     logger = setup_logger(
         name="mcfp.sim.data_gen_single",
         log_dir=cfg.logging.log_dir,
     )
     logger.info("Starting single-robot capability generation.")
 
+    # Paths
     urdf_root = Path(cfg.data.urdf_root)
     cap_root = Path(cfg.data.capability_root)
 
+    # Robot-specific settings
     robot_name = cfg.robot.name
     urdf_filename = cfg.robot.urdf_filename
 
@@ -33,9 +38,12 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "capability_map.npz"
 
-    logger.info(f"URDF path: {urdf_path}")
-    logger.info(f"Output capability path: {output_path}")
+    logger.info("URDF path: %s", urdf_path)
+    logger.info("Output capability path: %s", output_path)
 
+    # All sampling / indicator-related hyperparameters are inside cfg.grid and cfg.sim.
+    # generate_capability_for_robot (in mcfp.sim.grid_builder) is responsible
+    # for reading them and passing them down to indicators.
     generate_capability_for_robot(
         urdf_path=urdf_path,
         output_path=output_path,

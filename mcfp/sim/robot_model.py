@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional
-
-from mcfp.sim.fk_ik import create_kinematics_backend, KinematicsBackend
+from typing import List, Tuple, Dict, Optional
 
 import numpy as np
+
+from mcfp.sim.fk_ik import create_kinematics_backend, KinematicsBackend
 
 
 class RobotModel:
@@ -16,9 +17,9 @@ class RobotModel:
 
     This class is responsible for:
     - Parsing the URDF and discovering actuated joints.
-    - Exposing joint metadata (names, limits, count) in a backend-agnostic way.
-    - Providing a stable kinematics API (fk / link_poses / jacobian) that can
-      later be backed by Pinocchio, PyBullet, MoveIt, etc.
+    - Exposing joint metadata (names, limits, count).
+    - Providing a stable kinematics API (fk / link_poses / jacobian).
+    - Robustly estimating link collision geometries for self-collision checks.
 
     Parameters
     ----------
@@ -26,14 +27,6 @@ class RobotModel:
         Path to the URDF file describing the robot.
     logger:
         Logger instance for reporting status and potential issues.
-
-    Notes
-    -----
-    This implementation is backend-agnostic. Joint metadata is parsed
-    directly from the URDF, while all kinematics queries are delegated
-    to a KinematicsBackend instance (currently PyBullet-based).
-    Other backends (Pinocchio, MoveIt, etc.) can be plugged in without
-    changing the public interface.
     """
 
     def __init__(
@@ -59,9 +52,10 @@ class RobotModel:
         self._joint_names: List[str] = []
         self._joint_limits: List[Tuple[float, float]] = []
 
-        # store kinematic edges between links parsed from URDF
+        # store kinematic edges between links parsed from URDF (parent, child)
         self._link_edges: List[Tuple[str, str]] = []
 
+        # 1. Parse Structure
         self._parse_urdf_joints()
 
         if not self._joint_names:
@@ -75,7 +69,7 @@ class RobotModel:
                 f"from URDF."
             )
 
-        # Build kinematics backend using parsed joints
+        # 2. Build kinematics backend
         self._kin_backend: KinematicsBackend = create_kinematics_backend(
             urdf_path=self.urdf_path,
             joint_names=self._joint_names,
@@ -85,8 +79,6 @@ class RobotModel:
         )
 
         if self.end_effector_link is None:
-            # Backend will fall back to its own default, typically
-            # the last link in the kinematic chain.
             self.logger.info(
                 "[RobotModel] end_effector_link not provided; "
                 "kinematics backend will use its default end-effector."
@@ -108,99 +100,212 @@ class RobotModel:
 
     @property
     def joint_limits(self) -> np.ndarray:
-        """Return joint limits as an array of shape (num_joints, 2).
-
-        The first column stores lower bounds, the second column stores
-        upper bounds. For continuous or unspecified limits, a default
-        range [-pi, pi] is used.
-        """
+        """Return joint limits as an array of shape (num_joints, 2)."""
         if not self._joint_limits:
             return np.zeros((0, 2), dtype=float)
         return np.asarray(self._joint_limits, dtype=float)
     
     @property
     def link_edges(self) -> List[Tuple[str, str]]:
-        """Return list of (parent_link, child_link) edges from URDF.
-
-        The list follows the order of actuated joints and can be used
-        for simple kinematic chain visualisation.
-        """
+        """Return list of (parent_link, child_link) edges from URDF."""
         return list(self._link_edges)
 
-
     # ------------------------------------------------------------------
-    # Kinematics API stubs
+    # Geometry Estimation API (The Robust "Fat Robot" Fix)
     # ------------------------------------------------------------------
 
-    def fk(self, q: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """Compute end-effector pose (position + quaternion) for q.
+    def get_link_radii(self) -> Dict[str, float]:
+        """Estimate collision radius for each link robustly.
 
-        Parameters
-        ----------
-        q:
-            Joint configuration as an array of shape (num_joints,).
+        Logic Hierarchy:
+        1. Explicit Primitive: Use <collision>/<geometry>/{cylinder, sphere} radius.
+        2. Inertial Estimation: r ~ sqrt(2*I/m).
+           - Clamped between [0.02, 0.12] meters (Physical limits).
+           - Constrained by Link Length (Aspect Ratio check).
+        3. Fallback: 0.03m (safe default for typical arms).
 
         Returns
         -------
-        position:
-            End-effector position as a (3,) NumPy array.
-        orientation:
-            End-effector orientation as a quaternion (x, y, z, w) with
-            shape (4,).
+        radii : Dict[str, float]
+            Mapping from link name to estimated radius (meters).
         """
+        radii = {}
+        
+        try:
+            tree = ET.parse(self.urdf_path)
+            root = tree.getroot()
+        except Exception as exc:
+            self.logger.error(f"[RobotModel] Failed to parse URDF for radii: {exc}")
+            return {}
+
+        # 1. Pre-calculate Link Lengths (Distance between joints)
+        # This is critical for aspect ratio constraints.
+        link_lengths = self._estimate_link_lengths(root)
+
+        # 2. Defaults
+        MIN_RADIUS = 0.02  # 2cm - minimum physical thickness
+        MAX_RADIUS = 0.12  # 12cm - max reasonable thickness for arm links
+        DEFAULT_RADIUS = 0.03 # 3cm - safe fallback
+
+        for link in root.findall(".//link"):
+            name = link.attrib.get("name")
+            if not name:
+                continue
+
+            radius: Optional[float] = None
+            
+            # --- Strategy A: Explicit Collision Primitives (Most Reliable) ---
+            coll = link.find("collision")
+            if coll is not None:
+                geo = coll.find("geometry")
+                if geo is not None:
+                    # Try cylinder
+                    cyl = geo.find("cylinder")
+                    if cyl is not None and "radius" in cyl.attrib:
+                        try:
+                            radius = float(cyl.attrib["radius"])
+                        except ValueError:
+                            pass
+                    # Try sphere
+                    if radius is None:
+                        sph = geo.find("sphere")
+                        if sph is not None and "radius" in sph.attrib:
+                            try:
+                                radius = float(sph.attrib["radius"])
+                            except ValueError:
+                                pass
+            
+            # --- Strategy B: Inertial Estimation with Physics Clamping ---
+            if radius is None:
+                inertial = link.find("inertial")
+                if inertial is not None:
+                    mass_elem = inertial.find("mass")
+                    inertia_elem = inertial.find("inertia")
+                    
+                    if mass_elem is not None and "value" in mass_elem.attrib:
+                        try:
+                            m = float(mass_elem.attrib["value"])
+                            
+                            # Virtual link (mass near 0)
+                            if m <= 1e-4:
+                                radius = 0.0
+                            elif inertia_elem is not None:
+                                ixx = float(inertia_elem.attrib.get("ixx", 0))
+                                iyy = float(inertia_elem.attrib.get("iyy", 0))
+                                izz = float(inertia_elem.attrib.get("izz", 0))
+                                
+                                # Use minimal non-zero inertia.
+                                # Assumption: Smallest I corresponds to rotation around long axis.
+                                moments = [v for v in (ixx, iyy, izz) if v > 1e-6]
+                                if moments:
+                                    min_I = min(moments)
+                                    # Basic estimation: r = sqrt(2*I/m)
+                                    r_est = math.sqrt(2.0 * min_I / m)
+                                    
+                                    # Apply Hard Physical Clamp
+                                    radius = max(MIN_RADIUS, min(r_est, MAX_RADIUS))
+                        except ValueError:
+                            pass
+
+            # --- Strategy C: Geometric Aspect Ratio Constraint ---
+            # Even if we got a radius from Inertia, it might be "fat" due to hollow shells.
+            # We check against the link length. A link shouldn't be drastically wider than it is long.
+            
+            link_len = link_lengths.get(name, 0.0)
+            
+            # If we have a non-zero radius and a meaningful length
+            if radius is not None and radius > 0 and link_len > 0.05:
+                # Aspect Ratio Limit: Radius shouldn't exceed 40% of length for arm segments.
+                # This heuristic prevents spheres appearing where cylinders should be.
+                max_geometric_r = 0.4 * link_len
+                
+                # If calculated radius is way bigger than reasonable for this length
+                if radius > max_geometric_r:
+                    # Soft clamp: take the geometric limit, but respect Min Radius
+                    radius = max(MIN_RADIUS, max_geometric_r)
+
+            # --- Final Fallback ---
+            if radius is None:
+                # Check for virtual link again via visual/collision presence
+                if link.find("visual") is None and link.find("collision") is None:
+                    radius = 0.0
+                else:
+                    radius = DEFAULT_RADIUS
+            
+            radii[name] = radius
+
+        RADIUS_SCALE = 0.7 
+        for k in radii:
+            radii[k] *= RADIUS_SCALE
+
+        # Log for debugging
+        debug_str = ", ".join([f"{k}:{v:.3f}" for k, v in radii.items()])
+        self.logger.info(f"[RobotModel] Estimated Radii (Scaled x{RADIUS_SCALE}): {debug_str}")
+        
+        return radii
+
+    def _estimate_link_lengths(self, xml_root: ET.Element) -> Dict[str, float]:
+        """Helper: Estimate link length based on distance to child joint.
+        
+        Returns mapping: link_name -> length (distance to child joint origin).
+        """
+        link_lengths = {}
+        
+        # Map link -> child joint origin distance
+        # URDF Structure: Joint has <parent link="..."> and <origin xyz="...">
+        for joint in xml_root.findall(".//joint"):
+            parent_elem = joint.find("parent")
+            origin_elem = joint.find("origin")
+            
+            if parent_elem is not None and origin_elem is not None:
+                parent_name = parent_elem.attrib.get("link")
+                xyz_str = origin_elem.attrib.get("xyz")
+                
+                if parent_name and xyz_str:
+                    try:
+                        xyz = [float(x) for x in xyz_str.split()]
+                        dist = math.sqrt(sum(x*x for x in xyz))
+                        
+                        # A link might have multiple children (branching).
+                        # We take the max distance as the "length" of the main body.
+                        current_len = link_lengths.get(parent_name, 0.0)
+                        link_lengths[parent_name] = max(current_len, dist)
+                    except ValueError:
+                        pass
+        return link_lengths
+
+    # ------------------------------------------------------------------
+    # Kinematics API (Delegation)
+    # ------------------------------------------------------------------
+
+    def fk(self, q: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Compute end-effector pose (position + quaternion) for q."""
         if q.shape[0] != self.num_joints:
             raise ValueError(
                 f"FK expected q with shape ({self.num_joints},), "
                 f"got {q.shape}."
             )
-
-        position, orientation = self._kin_backend.fk_pose(q)
-        return position, orientation
+        return self._kin_backend.fk_pose(q)
     
     def fk_position(self, q: np.ndarray) -> np.ndarray:
-        """Compute end-effector position for q.
-
-        This is a convenience wrapper around fk(...) that discards
-        the orientation component.
-        """
+        """Compute end-effector position for q."""
         pos, _ = self.fk(q)
         return pos
 
     def link_poses(self, q: np.ndarray) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
-        """Compute poses for all links in the kinematic chain.
-
-        Parameters
-        ----------
-        q:
-            Joint configuration as an array of shape (num_joints,).
-
-        Returns
-        -------
-        poses:
-            Mapping from link name to a (position, orientation) tuple.
-            Position is a (3,) array and orientation is a quaternion
-            (x, y, z, w) with shape (4,).
-        """
+        """Compute poses for all links in the kinematic chain."""
         if q.shape[0] != self.num_joints:
             raise ValueError(
                 f"link_poses expected q with shape ({self.num_joints},), "
                 f"got {q.shape}."
             )
-
-        poses = self._kin_backend.link_poses(q)
-        return poses
-
+        return self._kin_backend.link_poses(q)
 
     def jacobian(self, q: np.ndarray) -> np.ndarray | None:
-        """Compute the geometric Jacobian at the end-effector.
-
-        This method delegates to the selected kinematics backend.
-        The expected shape is (6, num_joints).
-        """
+        """Compute the geometric Jacobian at the end-effector."""
         if self._kin_backend is None:
             self.logger.warning(
-                "[RobotModel.jacobian] No kinematics backend is available. "
-                "Returning None."
+                "[RobotModel.jacobian] No kinematics backend available."
             )
             return None
 
@@ -213,28 +318,12 @@ class RobotModel:
 
         return self._kin_backend.jacobian(q_arr)
 
-
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Internal helpers (Parsing)
     # ------------------------------------------------------------------
 
     def _parse_urdf_joints(self) -> None:
-        """Parse actuated joints and limits from the URDF XML.
-
-        The parser keeps joints whose type is one of:
-        - 'revolute'
-        - 'prismatic'
-        - 'continuous'
-
-        For each joint:
-        - If a <limit> tag is present and both lower/upper are given,
-          bounds are read from it.
-        - If limits are missing:
-            * revolute / continuous: default range [-pi, pi] (rad)
-            * prismatic: default range [-1.0, 1.0] (m)
-        Any parsing failure raises an exception so that upstream code
-        does not silently continue with invalid joint metadata.
-        """
+        """Parse actuated joints and limits from the URDF XML."""
         try:
             tree = ET.parse(self.urdf_path)
             root = tree.getroot()
@@ -275,11 +364,10 @@ class RobotModel:
             j_type = joint.attrib.get("type", "")
 
             if not name:
-                raise ValueError(
-                    "[RobotModel] Encountered joint without a name in URDF "
-                    f"(type='{j_type}'). This is not supported."
-                )
+                # Skip nameless joints (should technically not happen in valid URDF)
+                continue
             
+            # 1. Edges for visualization/collision
             parent_elem = joint.find("parent")
             child_elem = joint.find("child")
             if parent_elem is not None and child_elem is not None:
@@ -288,54 +376,39 @@ class RobotModel:
                 if parent_link and child_link:
                     self._link_edges.append((parent_link, child_link))
 
+            # 2. Limits
             limit_elem = joint.find("limit")
+            lower, upper = None, None
+
             if limit_elem is not None:
                 lower_str = limit_elem.attrib.get("lower")
                 upper_str = limit_elem.attrib.get("upper")
 
                 if lower_str is not None and upper_str is not None:
-                    lower = float(lower_str)
-                    upper = float(upper_str)
-                else:
-                    # Partially specified limits: fall back to defaults
-                    if j_type == "prismatic":
-                        lower, upper = default_lin_lower, default_lin_upper
-                        self.logger.warning(
-                            "[RobotModel] Joint '%s' (prismatic) has "
-                            "incomplete limits; using default [%f, %f].",
-                            name,
-                            lower,
-                            upper,
-                        )
-                    else:
-                        lower, upper = default_rot_lower, default_rot_upper
-                        self.logger.warning(
-                            "[RobotModel] Joint '%s' (%s) has incomplete "
-                            "limits; using default [%f, %f].",
-                            name,
-                            j_type,
-                            lower,
-                            upper,
-                        )
-            else:
-                # No explicit limit → use a default range depending on type
+                    try:
+                        lower = float(lower_str)
+                        upper = float(upper_str)
+                    except ValueError:
+                        pass
+            
+            # Fallback if limits missing or invalid
+            if lower is None or upper is None:
                 if j_type == "prismatic":
                     lower, upper = default_lin_lower, default_lin_upper
                     self.logger.warning(
-                        "[RobotModel] Joint '%s' (prismatic) has no limits; "
-                        "using default [%f, %f].",
-                        name,
-                        lower,
-                        upper,
+                        "[RobotModel] Joint '%s' (prismatic) has incomplete "
+                        "limits; using default [%f, %f].",
+                        name, lower, upper
                     )
                 else:
                     lower, upper = default_rot_lower, default_rot_upper
+                    # continuous joints naturally fall here or have huge limits
+                    if j_type != "continuous":
+                        self.logger.warning(
+                            "[RobotModel] Joint '%s' (%s) has incomplete "
+                            "limits; using default [%f, %f].",
+                            name, j_type, lower, upper
+                        )
 
             self._joint_names.append(name)
             self._joint_limits.append((lower, upper))
-
-        self.logger.info(
-            "[RobotModel] Parsed %d actuated joints from URDF.",
-            len(self._joint_names),
-        )
-
