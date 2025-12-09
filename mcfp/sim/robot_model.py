@@ -234,7 +234,7 @@ class RobotModel:
             
             radii[name] = radius
 
-        RADIUS_SCALE = 0.7 
+        RADIUS_SCALE = 0.9 
         for k in radii:
             radii[k] *= RADIUS_SCALE
 

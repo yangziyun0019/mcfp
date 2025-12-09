@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import collections
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Deque
+from typing import List, Optional, Tuple, Dict, Any, Deque
 
 import numpy as np
 
@@ -17,8 +17,10 @@ from mcfp.sim.indicators import (
     compute_g_sigma_min,
     compute_g_iso,
     compute_g_ws_margin,
+    compute_g_rot,
 )
 from mcfp.data.io import save_capability_map
+import scipy.ndimage as ndimage
 
 
 def _get_cfg_value(cfg: Any, key: str) -> Any:
@@ -307,6 +309,8 @@ def _evaluate_grid_hybrid(
     # Sliding window for convergence monitoring (1 = significant event, 0 = boring)
     update_events: Deque[int] = collections.deque(maxlen=stability_window)
 
+    cell_quats: List[List[np.ndarray]] = [[] for _ in range(num_cells)]
+
     # --- 3. Sampling Loop ---
     logger.info(
         f"[grid_builder] Starting Survey. Budget: {max_total_samples}. "
@@ -334,7 +338,7 @@ def _evaluate_grid_hybrid(
             
         # C. FK
         try:
-            pos, _ = robot.fk(q)
+            pos, ori = robot.fk(q) 
         except Exception:
             update_events.append(0)
             continue
@@ -343,6 +347,8 @@ def _evaluate_grid_hybrid(
         if idx is None:
             update_events.append(0)
             continue
+
+        cell_quats[idx].append(np.array(ori, dtype=np.float32))
             
         # D. Compute Indicators
         val_g_lim = compute_g_lim(q, joint_limits)
@@ -432,10 +438,34 @@ def _evaluate_grid_hybrid(
         if m_val > 1e-6:
             g_red = g_red / m_val
             
-    # Static Margin
-    g_margin = compute_g_ws_margin(
-        cell_centers, grid_meta["bounds_min"], grid_meta["bounds_max"]
-    )
+    # Robust Distance Transform (EDT) for g_margin 
+ 
+    dims = grid_meta["cell_shape"] # (Nx, Ny, Nz)
+    valid_grid_3d = mask.reshape(dims)
+    res = grid_meta["resolution"]
+    
+    if num_final_valid > 0:
+        dist_grid = ndimage.distance_transform_edt(
+            valid_grid_3d, 
+            sampling=res  
+        )
+        
+        max_dist = dist_grid.max()
+        if max_dist > 1e-6:
+            dist_grid = dist_grid / max_dist
+        
+        g_margin = dist_grid.flatten().astype(np.float32)
+    else:
+        g_margin = np.zeros(num_cells, dtype=np.float32)
+
+    logger.info("[grid_builder] Computing rotational coverage (g_rot)...")
+    g_rot = np.zeros(num_cells, dtype=np.float32)
+    
+    # Only compute for valid cells to save time
+    valid_indices = np.where(mask)[0]
+    for idx in valid_indices:
+        # compute_g_rot handles the batch processing internally
+        g_rot[idx] = compute_g_rot(cell_quats[idx])
 
     cap_data = {
         "cell_centers": cell_centers,
@@ -444,10 +474,12 @@ def _evaluate_grid_hybrid(
         # Core Indicators
         "g_ws": mask.astype(np.float32),      # [0,1] Existence
         "g_red": g_red,                       # [0,1] Density
-        "g_margin": g_margin,                 # [0,1] Boundary Dist
+        "g_margin": g_margin,                 # [0,1] Boundary Dist (Updated via EDT)
         
         "g_self": avg_g_self,                 # [0,1] Avg Safety
         "g_lim": avg_g_lim,                   # [0,1] Avg Margin
+
+        "g_rot": g_rot,                       # [0, 1] Dexterity
         
         "g_man": max_g_man,                   # [0,1] Max Capability
         "g_iso": max_g_iso,                   # [0,1] Max Isotropy

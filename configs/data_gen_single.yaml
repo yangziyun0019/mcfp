@@ -31,7 +31,7 @@ grid:
   mode: "auto"
 
   # Voxel resolution [m]
-  resolution: 0.08
+  resolution: 0.03
 
   # Phase 1: Scouting parameters
   bounds_samples: 50000     # fast FK samples to find AABB
@@ -45,7 +45,7 @@ grid:
     # Event-based Convergence Criteria
     improvement_threshold: 0.01    # 1% improvement in g_man counts as a "Significant Event"
     stability_window: 10000        # Sliding window size to measure update rate
-    min_update_rate: 0.005        # Stop if < 0.05% of samples in window are significant
+    min_update_rate: 0.01        # Stop if < 0.1% of samples in window are significant
     
     progress_interval: 10000       # Log frequency
 

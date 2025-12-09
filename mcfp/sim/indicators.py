@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from typing import Sequence
+from typing import List, Optional, Tuple, Dict, Any, Deque, Sequence
 
 import numpy as np
 
 from mcfp.sim.robot_model import RobotModel
 from mcfp.sim.collision import SelfCollisionChecker
 from mcfp.utils.logging import setup_logger
+from scipy.spatial import KDTree
 
 # Module-level logger. In scripts, you still initialise the main logger
 # with cfg.logging.log_dir; here we use None as a safe default.
@@ -346,3 +347,107 @@ def compute_g_red(ik_counts: np.ndarray) -> np.ndarray:
 
     g = np.log1p(counts) / np.log1p(max_ik)
     return np.clip(g, 0.0, 1.0).astype(np.float32)
+# ------------------------------------------------------------------
+# Rotational Coverage (Dexterity) Indicator
+# ------------------------------------------------------------------
+
+class SphereCoverageEvaluator:
+    """Evaluates how well a set of approach vectors covers the unit sphere.
+    
+    Uses a Fibonacci lattice to generate uniformly distributed bins on a sphere.
+    The coverage score is the ratio of unique bins occupied by the Z-axis 
+    of the end-effector orientations.
+    """
+    
+    def __init__(self, num_bins: int = 64):
+        self.num_bins = num_bins
+        # Generate reference points (bin centers)
+        self.ref_points = self._fibonacci_sphere(num_bins)
+        # KDTree for fast nearest-neighbor lookup
+        self.tree = KDTree(self.ref_points)
+
+    @staticmethod
+    def _fibonacci_sphere(samples: int) -> np.ndarray:
+        """Generate N uniformly distributed points on a sphere."""
+        points = []
+        phi = np.pi * (3.0 - np.sqrt(5.0))  # Golden angle
+        
+        for i in range(samples):
+            y = 1 - (i / float(samples - 1)) * 2  # y goes from 1 to -1
+            radius = np.sqrt(1 - y * y)
+            theta = phi * i 
+            x = np.cos(theta) * radius
+            z = np.sin(theta) * radius
+            points.append([x, y, z])
+            
+        return np.array(points, dtype=np.float32)
+
+    def compute_coverage(self, quaternions: np.ndarray) -> float:
+        """Calculate coverage ratio for a batch of quaternions.
+
+        Parameters
+        ----------
+        quaternions : np.ndarray
+            Shape (N, 4) array of (x, y, z, w).
+
+        Returns
+        -------
+        coverage : float
+            Fraction of sphere bins covered [0.0, 1.0].
+        """
+        if quaternions.shape[0] == 0:
+            return 0.0
+            
+        # 1. Extract Z-axis (Approach) vectors from quaternions
+        # Rotating v=[0,0,1] by q=[x,y,z,w]:
+        # x' = 2(xz + wy)
+        # y' = 2(yz - wx)
+        # z' = 1 - 2(xx + yy)
+        
+        x = quaternions[:, 0]
+        y = quaternions[:, 1]
+        z = quaternions[:, 2]
+        w = quaternions[:, 3]
+        
+        vec_x = 2.0 * (x * z + w * y)
+        vec_y = 2.0 * (y * z - w * x)
+        vec_z = 1.0 - 2.0 * (x * x + y * y)
+        
+        z_vectors = np.stack([vec_x, vec_y, vec_z], axis=1) # (N, 3)
+        
+        # 2. Map vectors to nearest bins
+        # k=1 returns (distances, indices)
+        _, bin_indices = self.tree.query(z_vectors, k=1)
+        
+        # 3. Count unique occupied bins
+        unique_bins = np.unique(bin_indices)
+        
+        return float(len(unique_bins) / self.num_bins)
+
+
+# Global singleton to avoid rebuilding KDTree for every cell
+_GLOBAL_SPHERE_EVALUATOR: Optional[SphereCoverageEvaluator] = None
+
+def compute_g_rot(quaternions: List[np.ndarray]) -> float:
+    """Compute Rotational Coverage g_rot for a list of quaternions.
+    
+    Parameters
+    ----------
+    quaternions : List[np.ndarray]
+        List of (4,) arrays representing orientations in a cell.
+        
+    Returns
+    -------
+    g_rot : float
+        Dexterity index in [0, 1].
+    """
+    global _GLOBAL_SPHERE_EVALUATOR
+    if _GLOBAL_SPHERE_EVALUATOR is None:
+        _GLOBAL_SPHERE_EVALUATOR = SphereCoverageEvaluator(num_bins=64)
+        
+    if not quaternions:
+        return 0.0
+        
+    # Convert list of arrays to (N, 4) matrix
+    q_arr = np.vstack(quaternions)
+    return _GLOBAL_SPHERE_EVALUATOR.compute_coverage(q_arr)

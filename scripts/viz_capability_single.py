@@ -38,16 +38,16 @@ def main() -> None:
 
     # 1) Simple scalar fields stored in the capability map
     scalar_keys = [
-        "u",
-        "g_ws",
-        "g_self",
-        "g_self_qstar",
-        "g_lim",
-        "g_man",
-        "g_sigma_min",
-        "g_iso",
-        "g_ws_margin",
-        "g_red",
+        "g_ws",      
+        "g_red",                       
+        "g_margin",                 
+        
+        "g_self",                 
+        "g_lim",                   
+        "g_rot",
+        "g_man",                   
+        "g_iso",                  
+        "g_sigma",
     ]
 
     for key in scalar_keys:
