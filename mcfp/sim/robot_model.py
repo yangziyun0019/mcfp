@@ -5,12 +5,12 @@ from __future__ import annotations
 import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional ,Union, Any
 from scipy.spatial.transform import Rotation as R
 
 import numpy as np
 
-from mcfp.sim.fk_ik import create_kinematics_backend, KinematicsBackend
+from mcfp.sim.fk_ik import create_kinematics_backend, SpecKinematics, KinematicsBackend
 
 
 class RobotModel:
@@ -32,58 +32,108 @@ class RobotModel:
 
     def __init__(
         self,
-        urdf_path: Path,
-        logger,
+        urdf_path: Optional[Union[str, Path]] = None,
+        spec: Optional[Dict[str, Any]] = None,
+        logger=None,
         base_link: Optional[str] = None,
         end_effector_link: Optional[str] = None,
     ) -> None:
-        
-        self.urdf_path = Path(urdf_path).resolve()
-        self.logger = logger
+        if logger is None:
+            logger.basicConfig(level=logger.INFO)
+            self.logger = logger.getLogger("RobotModel")
+        else:
+            self.logger = logger
 
-        self.base_link: Optional[str] = base_link
-        self.end_effector_link: Optional[str] = end_effector_link
-
-        if not self.urdf_path.is_file():
-            raise FileNotFoundError(f"URDF file not found: {self.urdf_path}")
-
-        self.logger.info(f"[RobotModel] Loading URDF from: {self.urdf_path}")
-
-        # Joint metadata parsed from URDF
+        self.name: str = "unknown_robot"
         self._joint_names: List[str] = []
         self._joint_limits: List[Tuple[float, float]] = []
+        self._link_edges: List[Tuple[str, str]] = []  
+        self._link_radii: Dict[str, float] = {}       
+        
+        self.base_link: Optional[str] = base_link
+        self.end_effector_link: Optional[str] = end_effector_link
+        
+        self.urdf_path = Path(urdf_path).resolve() if urdf_path else None
+        self._spec = spec
 
-        # store kinematic edges between links parsed from URDF (parent, child)
-        self._link_edges: List[Tuple[str, str]] = []
+        # =========================================================
+        # A: JSON Spec 
+        # =========================================================
+        if self._spec is not None:
+            self.logger.info("[RobotModel] Initializing from Morphology Spec (JSON Mode).")
 
-        # 1. Parse Structure
-        self._parse_urdf_joints()
+            self._init_from_spec(base_link, end_effector_link)
 
-        if not self._joint_names:
-            self.logger.warning(
-                "[RobotModel] No actuated joints found in URDF. "
-                "Please check the file or extend the parser."
+            self._kin_backend: KinematicsBackend = SpecKinematics(
+                spec=self._spec,
+                joint_names=self._joint_names,
+                base_link=self.base_link,
+                end_effector_link=self.end_effector_link
+            )
+
+        # =========================================================
+        # B: URDF 
+        # =========================================================
+        elif self.urdf_path is not None:
+            if not self.urdf_path.is_file():
+                raise FileNotFoundError(f"URDF file not found: {self.urdf_path}")
+            
+            self.logger.info(f"[RobotModel] Loading URDF from: {self.urdf_path}")
+            self.name = "urdf_robot" 
+
+            self._parse_urdf_joints()
+
+            self._kin_backend: KinematicsBackend = create_kinematics_backend(
+                urdf_path=self.urdf_path,
+                joint_names=self._joint_names,
+                base_link=self.base_link,
+                end_effector_link=self.end_effector_link,
+                logger=self.logger,
             )
         else:
-            self.logger.info(
-                f"[RobotModel] Parsed {len(self._joint_names)} actuated joints "
-                f"from URDF."
-            )
+            raise ValueError("[RobotModel] Must provide either 'urdf_path' or 'spec'.")
 
-        # 2. Build kinematics backend
-        self._kin_backend: KinematicsBackend = create_kinematics_backend(
-            urdf_path=self.urdf_path,
-            joint_names=self._joint_names,
-            base_link=self.base_link,
-            end_effector_link=self.end_effector_link,
-            logger=self.logger,
-        )
-
+        # End Effector logging
         if self.end_effector_link is None:
             self.logger.info(
                 "[RobotModel] end_effector_link not provided; "
                 "kinematics backend will use its default end-effector."
             )
+        else:
+            self.logger.info(f"[RobotModel] End-effector link set to: {self.end_effector_link}")
+
+    def _init_from_spec(self, base_link_hint: Optional[str], ee_link_hint: Optional[str]):
+        """from JSON Spec get RobotModel """
+
+        meta = self._spec.get('meta', {})
+        self.name = meta.get('robot_name', 'unknown_robot')
+        self.base_link = base_link_hint or meta.get('base_link', 'base_link')
+        self.end_effector_link = ee_link_hint or meta.get('ee_link', 'Link6')
+
+        morph = self._spec.get('morphology', {})
+        ordered_names = morph.get('actuated_joint_names', [])
+
+        chain_joints = {j['name']: j for j in self._spec['chain']['joints']}
+
+        if not ordered_names:
+            ordered_names = [j['name'] for j in self._spec['chain']['joints'] if j.get('is_actuated')]
+            
+        for name in ordered_names:
+            if name in chain_joints:
+                j_data = chain_joints[name]
+                self._joint_names.append(name)
+                self._joint_limits.append((j_data['limit_lower'], j_data['limit_upper']))
+            else:
+                self.logger.warning(f"[RobotModel] Joint {name} listed in morphology but missing in chain.")
+
+        for j in self._spec['chain']['joints']:
+            p, c = j.get('parent_link'), j.get('child_link')
+            if p and c:
+                self._link_edges.append((p, c))
+
+        for link in self._spec['chain']['links']:
+            r = link.get('radius_estimate', 0.03)
+            self._link_radii[link['name']] = r * 0.9
 
     # ------------------------------------------------------------------
     # Public properties
@@ -116,20 +166,15 @@ class RobotModel:
     # ------------------------------------------------------------------
 
     def get_link_radii(self) -> Dict[str, float]:
-        """Estimate collision radius for each link robustly.
-
-        Logic Hierarchy:
-        1. Explicit Primitive: Use <collision>/<geometry>/{cylinder, sphere} radius.
-        2. Inertial Estimation: r ~ sqrt(2*I/m).
-           - Clamped between [0.005, 0.03] meters (Physical limits).
-           - Constrained by Link Length (Aspect Ratio check).
-        3. Fallback: 0.03m (safe default for typical arms).
-
-        Returns
-        -------
-        radii : Dict[str, float]
-            Mapping from link name to estimated radius (meters).
         """
+        Estimate collision radius for each link robustly.
+        
+        In Spec Mode: Returns pre-loaded radii from JSON.
+        In URDF Mode: Parses XML to estimate radii (Legacy logic).
+        """
+        if self._spec is not None:
+            return self._link_radii.copy()
+        
         radii = {}
         
         try:
@@ -140,7 +185,6 @@ class RobotModel:
             return {}
 
         # 1. Pre-calculate Link Lengths (Distance between joints)
-        # This is critical for aspect ratio constraints.
         link_lengths = self._estimate_link_lengths(root)
 
         # 2. Defaults

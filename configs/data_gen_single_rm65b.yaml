@@ -4,7 +4,11 @@ logging:
   log_dir: "logs/sim_single"
 
 data:
+  # URDF path
   urdf_root: "D:/code/mcfp/data/urdf/rm_65_b_description/urdf"
+  
+  # Morphology JSON path (Ensure this directory exists)
+  json_root: "D:/code/mcfp/data/morph_specs/rm65"
 
   capability_root: "data/capability"
 
@@ -25,7 +29,14 @@ sim:
 
 robot:
   name: "rm_65_b"
+
+  # [Option 1] Use URDF
+  # source_type: "urdf"
   urdf_filename: "rm_65_b_description.urdf"
+
+  # [Option 2] Use JSON Spec (Uncomment this to switch mode)
+  source_type: "json"
+  spec_filename: "rm65_base.json"
 
 grid:
   # Workspace bounding box mode: "auto" (scouting) or "manual"

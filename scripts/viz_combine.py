@@ -14,6 +14,8 @@ CURRENT_FILE = Path(__file__).resolve()
 PROJECT_ROOT = CURRENT_FILE.parent.parent
 sys.path.append(str(PROJECT_ROOT))
 
+# Import visualization tools
+# Ensure you have 'trimesh', 'pyrender', 'urdfpy' installed for this to work
 from mcfp.viz.interactive_3d import InteractiveCapabilityViz
 from mcfp.utils.logging import setup_logger
 
@@ -24,12 +26,9 @@ def load_config(path: Path):
 def main():
     logger = setup_logger(name="mcfp.scripts.viz")
     
-    # 2. Load Configuration (Single Source of Truth)
-    # The script only needs to know *which* config to use.
-
-    config_rel_path = "configs/data_gen_single_wx200.yaml" 
-    # config_rel_path = "configs/data_gen_single_openmanipulator.yaml"
-    # config_rel_path = "configs/data_gen_single_rm65b.yaml"
+    # 2. Load Configuration
+    # Adjust this path to your current active config file
+    config_rel_path = "configs/data_gen_single_rm65b.yaml" 
 
     config_path = PROJECT_ROOT / config_rel_path
     
@@ -40,45 +39,68 @@ def main():
     logger.info(f"Loading configuration: {config_rel_path}")
     cfg = load_config(config_path)
 
-    # 3. Resolve Paths from Config
-    # Data path logic: project_root / capability_root / robot_name / filename
-    cap_root = PROJECT_ROOT / cfg.data.capability_root
-    data_path = cap_root / cfg.robot.name / "capability_map.npz"
+    # 3. Resolve Data Paths (Capability Map)
+    if "data" not in cfg or "capability_root" not in cfg.data:
+        logger.error("Config missing 'data.capability_root'.")
+        return
 
-    # URDF path logic:
-    # YAML urdf_root can be absolute or relative. We handle both.
-    urdf_root_raw = Path(cfg.data.urdf_root)
+    cap_root = PROJECT_ROOT / cfg.data.capability_root
+    robot_name = cfg.robot.get("name", "unknown_robot")
+    data_path = cap_root / robot_name / "capability_map.npz"
+
+    # 4. Resolve URDF Paths (Critical for Visualization)
+    # Visualization ALWAYS needs URDF for meshes, even if data gen was Spec-based.
+    
+    urdf_filename = cfg.robot.get("urdf_filename")
+    
+    if not urdf_filename:
+        logger.error(
+            "CRITICAL: Config is missing 'robot.urdf_filename'.\n"
+            "Visualization requires the URDF to load 3D meshes.\n"
+            "-> Please uncomment 'urdf_filename' in your YAML config, "
+            "even if 'source_type' is set to 'json'."
+        )
+        return
+
+    # Handle URDF Root (Check both old and new config styles)
+    urdf_root_str = cfg.data.get("urdf_root")
+    if not urdf_root_str:
+        logger.error("Config missing 'data.urdf_root'. Cannot locate URDF.")
+        return
+
+    urdf_root_raw = Path(urdf_root_str)
     if urdf_root_raw.is_absolute():
         urdf_root_dir = urdf_root_raw
     else:
         urdf_root_dir = PROJECT_ROOT / urdf_root_raw
         
-    urdf_path = urdf_root_dir / cfg.robot.urdf_filename
+    urdf_path = urdf_root_dir / urdf_filename
     
-    # Mesh dir inference (Standard ROS layout: urdf/../meshes)
+    # Standard ROS layout inference: urdf/../meshes
+    # If your folder structure is different, you might need to adjust this.
     mesh_dir = urdf_root_dir.parent / "meshes"
 
-    # 4. Topology from Config
-    base_link = cfg.sim.base_link
-    ee_link = cfg.sim.end_effector_link
+    # 5. Topology from Config
+    base_link = cfg.sim.get("base_link", "base_link")
+    ee_link = cfg.sim.get("end_effector_link", "tool0")
 
-    # 5. Validation
+    # 6. Validation
     if not data_path.exists():
-        logger.error(f"Data missing: {data_path}\nPlease run generation script first.")
+        logger.error(f"Capability Data missing: {data_path}\nPlease run generation script first.")
         return
     if not urdf_path.exists():
-        logger.error(f"URDF missing: {urdf_path}")
+        logger.error(f"URDF file missing: {urdf_path}")
         return
 
-    # 6. Launch Visualization
-    # Note: mesh_scale is REMOVED. It is now auto-read from URDF in robot_model.py.
-    logger.info("Initializing Visualization Studio...")
+    # 7. Launch Visualization
+    logger.info(f"Visualizing Data: {data_path}")
+    logger.info(f"Using Robot Model: {urdf_path}")
     
     viz = InteractiveCapabilityViz(
         data_path=str(data_path),
         urdf_path=str(urdf_path),
         mesh_dir=str(mesh_dir),
-        downsample_rate=20,     # Visualization specific param
+        downsample_rate=20,     # Adjust if visualization is too slow
         base_link=base_link,
         end_effector_link=ee_link
     )

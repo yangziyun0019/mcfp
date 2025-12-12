@@ -1,0 +1,400 @@
+{
+  "meta": {
+    "robot_name": "rm65",
+    "family": "rm65",
+    "variant_id": "base",
+    "parent_variant_id": null,
+    "source": "real",
+    "urdf_path": "D:\\code\\mcfp\\data\\urdf\\rm_65_b_description\\urdf\\rm_65_b_description.urdf",
+    "dof": 6,
+    "base_link": "base_link",
+    "ee_link": "Link6"
+  },
+  "chain": {
+    "links": [
+      {
+        "name": "base_link",
+        "index": 0,
+        "is_base": true,
+        "is_ee": false,
+        "mass": 0.841070778135659,
+        "com": [
+          -0.000433277303987328,
+          -3.54664423471128e-05,
+          0.0599427668933796
+        ],
+        "inertia": {
+          "ixx": 0.0017261110801622,
+          "iyy": 0.00170987405835604,
+          "izz": 0.000904023422915791,
+          "ixy": 2.52746264980217e-06,
+          "ixz": -3.67690303614961e-05,
+          "iyz": 1.67996364994424e-06
+        },
+        "length_estimate": 0.2405,
+        "radius_estimate": 0.041728336956055274
+      },
+      {
+        "name": "Link1",
+        "index": 1,
+        "is_base": false,
+        "is_ee": false,
+        "mass": 0.593563443690403,
+        "com": [
+          1.2226305431569e-08,
+          0.0211079974844683,
+          -0.0251854220842269
+        ],
+        "inertia": {
+          "ixx": 0.00126614120341847,
+          "iyy": 0.00118168178300364,
+          "izz": 0.00056135241627747,
+          "ixy": -1.294980943835e-08,
+          "ixz": -9.80120923066996e-09,
+          "iyz": -0.00021121727444415
+        },
+        "length_estimate": 0.0,
+        "radius_estimate": 0.039141884630761604
+      },
+      {
+        "name": "Link2",
+        "index": 2,
+        "is_base": false,
+        "is_ee": false,
+        "mass": 0.864175046869043,
+        "com": [
+          0.152256463426163,
+          4.75383656106654e-07,
+          -0.00620260383607792
+        ],
+        "inertia": {
+          "ixx": 0.00089150298478414,
+          "iyy": 0.00733754343083901,
+          "izz": 0.00697869103915473,
+          "ixy": -2.23268489334765e-08,
+          "ixz": 0.00156246461035015,
+          "iyz": 6.28110889329165e-09
+        },
+        "length_estimate": 0.256,
+        "radius_estimate": 0.04088067397273914
+      },
+      {
+        "name": "Link3",
+        "index": 3,
+        "is_base": false,
+        "is_ee": false,
+        "mass": 0.289633681624654,
+        "com": [
+          5.05312670989961e-06,
+          -0.0595925663694732,
+          0.010569069212336
+        ],
+        "inertia": {
+          "ixx": 0.00063737100450158,
+          "iyy": 0.00015648388095025,
+          "izz": 0.000614178164773085,
+          "ixy": -7.05261293649751e-08,
+          "ixz": -3.86643272239426e-08,
+          "iyz": -0.00014461035994916
+        },
+        "length_estimate": 0.21,
+        "radius_estimate": 0.029584741514328012
+      },
+      {
+        "name": "Link4",
+        "index": 4,
+        "is_base": false,
+        "is_ee": false,
+        "mass": 0.239419768320061,
+        "com": [
+          1.15516617405898e-06,
+          -0.0180424468598241,
+          -0.0215394748352687
+        ],
+        "inertia": {
+          "ixx": 0.000285938919722783,
+          "iyy": 0.000262727540304212,
+          "izz": 0.000119888082791859,
+          "ixy": 3.07101359163101e-09,
+          "ixz": -2.21994118981953e-09,
+          "iyz": 4.4236583260078e-05
+        },
+        "length_estimate": 0.0,
+        "radius_estimate": 0.028481674035048254
+      },
+      {
+        "name": "Link5",
+        "index": 5,
+        "is_base": false,
+        "is_ee": false,
+        "mass": 0.218799761431678,
+        "com": [
+          3.19794786262152e-06,
+          -0.0593808368101458,
+          0.00736804250989326
+        ],
+        "inertia": {
+          "ixx": 0.000350540363914072,
+          "iyy": 0.000104927867487581,
+          "izz": 0.000334482418423629,
+          "ixy": -3.41781619975602e-08,
+          "ixz": -1.77056457224373e-08,
+          "iyz": -7.82431228461971e-05
+        },
+        "length_estimate": 0.144,
+        "radius_estimate": 0.02787273003939876
+      },
+      {
+        "name": "Link6",
+        "index": 6,
+        "is_base": false,
+        "is_ee": true,
+        "mass": 0.0649018034311231,
+        "com": [
+          0.000714234511756999,
+          -0.000396718732824521,
+          -0.0126723660946126
+        ],
+        "inertia": {
+          "ixx": 2.02766547502765e-05,
+          "iyy": 1.87986725225022e-05,
+          "izz": 3.17885459163081e-05,
+          "ixy": -1.32505200276849e-06,
+          "ixz": -2.5845091522508e-08,
+          "iyz": 3.39471452125439e-09
+        },
+        "length_estimate": 0.0,
+        "radius_estimate": 0.021661708941232163
+      }
+    ],
+    "joints": [
+      {
+        "name": "joint1",
+        "index": 0,
+        "type": "revolute",
+        "parent_link": "base_link",
+        "child_link": "Link1",
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "origin_xyz": [
+          0.0,
+          0.0,
+          0.2405
+        ],
+        "origin_rpy": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "limit_lower": -3.1,
+        "limit_upper": 3.1,
+        "is_actuated": true
+      },
+      {
+        "name": "joint2",
+        "index": 1,
+        "type": "revolute",
+        "parent_link": "Link1",
+        "child_link": "Link2",
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "origin_xyz": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          1.5708,
+          -1.5708,
+          0.0
+        ],
+        "limit_lower": -2.268,
+        "limit_upper": 2.268,
+        "is_actuated": true
+      },
+      {
+        "name": "joint3",
+        "index": 2,
+        "type": "revolute",
+        "parent_link": "Link2",
+        "child_link": "Link3",
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "origin_xyz": [
+          0.256,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          0.0,
+          0.0,
+          1.5708
+        ],
+        "limit_lower": -2.355,
+        "limit_upper": 2.355,
+        "is_actuated": true
+      },
+      {
+        "name": "joint4",
+        "index": 3,
+        "type": "revolute",
+        "parent_link": "Link3",
+        "child_link": "Link4",
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "origin_xyz": [
+          0.0,
+          -0.21,
+          0.0
+        ],
+        "origin_rpy": [
+          1.5708,
+          0.0,
+          0.0
+        ],
+        "limit_lower": -3.1,
+        "limit_upper": 3.1,
+        "is_actuated": true
+      },
+      {
+        "name": "joint5",
+        "index": 4,
+        "type": "revolute",
+        "parent_link": "Link4",
+        "child_link": "Link5",
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "origin_xyz": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          -1.5708,
+          0.0,
+          0.0
+        ],
+        "limit_lower": -2.233,
+        "limit_upper": 2.233,
+        "is_actuated": true
+      },
+      {
+        "name": "joint6",
+        "index": 5,
+        "type": "revolute",
+        "parent_link": "Link5",
+        "child_link": "Link6",
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "origin_xyz": [
+          0.0,
+          -0.144,
+          0.0
+        ],
+        "origin_rpy": [
+          1.5708,
+          0.0,
+          0.0
+        ],
+        "limit_lower": -6.28,
+        "limit_upper": 6.28,
+        "is_actuated": true
+      }
+    ]
+  },
+  "graph": {
+    "edges": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        5,
+        6
+      ]
+    ],
+    "node_type": [
+      "base",
+      "link",
+      "link",
+      "link",
+      "link",
+      "link",
+      "ee"
+    ]
+  },
+  "morphology": {
+    "variant_id": "base",
+    "parent_variant_id": null,
+    "actuated_joint_names": [
+      "joint1",
+      "joint2",
+      "joint3",
+      "joint4",
+      "joint5",
+      "joint6"
+    ],
+    "length_scale": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "joint_limit_scale": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "joint_limit_shift": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "r_vector": null,
+    "notes": {
+      "generated_from": "urdf"
+    }
+  }
+}

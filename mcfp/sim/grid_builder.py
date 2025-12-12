@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import collections
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Any, Deque
+from typing import List, Optional, Tuple, Dict, Any, Deque ,Union
 
 import numpy as np
+import json
 
 from mcfp.sim.robot_model import RobotModel
 from mcfp.sim.collision import SelfCollisionChecker
@@ -49,12 +50,13 @@ def _get_subconfig(cfg: Any, name: str) -> Any:
 
 
 def generate_capability_for_robot(
-    urdf_path: Path,
+    input_source: Union[Path, Dict], 
     output_path: Path,
     grid_cfg: Any,
     base_link: Optional[str],
     end_effector_link: Optional[str],
     logger,
+    is_morphology_spec: bool = False, 
 ) -> None:
     """Execute the end-to-end capability map generation pipeline.
 
@@ -66,23 +68,38 @@ def generate_capability_for_robot(
        and Event-based Convergence.
     5. Save results to .npz.
     """
-    logger.info(f"[grid_builder] Initializing robot from: {urdf_path}")
+    if is_morphology_spec:
+        if isinstance(input_source, (str, Path)):
+            logger.info(f"[grid_builder] Loading spec from {input_source}")
+            with open(input_source, 'r') as f:
+                spec_data = json.load(f)
+            robot_dir = Path(input_source).parent 
+        else:
+            spec_data = input_source
+            robot_dir = output_path.parent 
 
-    # 1. Initialize System
-    robot = RobotModel(
-        urdf_path=urdf_path,
-        logger=logger,
-        base_link=base_link,
-        end_effector_link=end_effector_link,
-    )
+        robot = RobotModel(
+            spec=spec_data, 
+            logger=logger,
+            base_link=base_link,
+            end_effector_link=end_effector_link,
+        )
+    else:
 
-    robot_dir = urdf_path.parent
+        urdf_path = Path(input_source)
+        robot_dir = urdf_path.parent
+        robot = RobotModel(
+            urdf_path=urdf_path,
+            logger=logger,
+            base_link=base_link,
+            end_effector_link=end_effector_link,
+        )
+
     self_checker = SelfCollisionChecker.from_robot(
         robot=robot,
-        cache_dir=robot_dir,
+        cache_dir=robot_dir, 
         logger=logger,
     )
-
     logger.info(
         f"[grid_builder] Robot ready. Joints: {robot.num_joints}. "
         "Starting Phase 1: Workspace Scouting."
