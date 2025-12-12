@@ -13,7 +13,9 @@ from mcfp.sim.grid_builder import generate_capability_for_robot
 def main() -> None:
     """Main entry point for single-URDF capability map generation."""
     # Load YAML configuration
-    cfg = load_config("configs/data_gen_single.yaml")
+    cfg = load_config("configs/data_gen_single_wx200.yaml")
+    # cfg = load_config("configs/data_gen_single_rm65b.yaml")
+    # cfg = load_config("configs/data_gen_single_openmanipulator.yaml")
 
     # Logger initialised from config
     logger = setup_logger(

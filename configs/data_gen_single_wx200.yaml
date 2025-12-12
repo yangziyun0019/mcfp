@@ -1,0 +1,57 @@
+# configs/data_gen_single_rm65b.yaml
+
+logging:
+  log_dir: "logs/sim_single"
+
+data:
+  urdf_root: "D:/code/mcfp/data/urdf/interbotix_descriptions/urdf"
+
+  capability_root: "data/capability"
+
+sim:
+  base_link: "/base_link"
+  end_effector_link: "/ee_arm_link"
+
+  # Self-collision parameters
+  # safe_clearance now acts as the normalization denominator (d_max) for g_self
+  # and implies the "safety airbag" thickness.
+  self_collision:
+    safe_clearance: 0.005   # [m], surface distance for g_self = 1.0
+
+  # Indicator scaling parameters
+  indicators:
+    k_man: 1.0             # scale for manipulability
+    k_sigma: 0.10          # scale for singularity distance
+
+robot:
+  name: "wx200"
+  urdf_filename: "wx200.urdf"
+
+grid:
+  # Workspace bounding box mode: "auto" (scouting) or "manual"
+  mode: "auto"
+
+  # Voxel resolution [m]
+  resolution: 0.03
+
+  # Phase 1: Scouting parameters
+  bounds_samples: 50000     # fast FK samples to find AABB
+  bounds_margin: 1.1        # expand AABB by 10%
+
+  # Phase 2: Surveying (Sampling) parameters
+  sampling:
+    max_total_samples: 2000000     # Hard cap budget
+    target_coverage: 0.4          # Minimum % of valid cells before considering stop
+    
+    # Event-based Convergence Criteria
+    improvement_threshold: 0.01    # 1% improvement in g_man counts as a "Significant Event"
+    stability_window: 10000        # Sliding window size to measure update rate
+    min_update_rate: 0.015        # Stop if < 0.1% of samples in window are significant
+    
+    progress_interval: 10000       # Log frequency
+
+  # Heuristic weights for selecting the representative q* (visualization only)
+  # Not used for aggregation logic.
+  utility:
+    w_man: 1.0
+    w_self: 1.0

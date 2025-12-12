@@ -188,6 +188,15 @@ def compute_g_man(
     J = np.asarray(J, dtype=np.float64)
     if J.ndim != 2:
         return 0.0
+    
+    col_norms = np.linalg.norm(J, axis=0)
+    valid_cols_mask = col_norms > 1e-6
+    J = J[:, valid_cols_mask]
+    
+    # Use linear part only for underactuated arms
+    rows, cols = J.shape
+    if cols < 6 and rows == 6:
+        J = J[:3, :]  
 
     JJ = J @ J.T
     det_val = float(np.linalg.det(JJ))
@@ -239,6 +248,13 @@ def compute_g_sigma_min(
     J = np.asarray(J, dtype=np.float64)
     if J.ndim != 2:
         return 0.0
+    
+    col_norms = np.linalg.norm(J, axis=0)
+    J = J[:, col_norms > 1e-6]
+    # Use linear part only for underactuated arms
+    rows, cols = J.shape
+    if cols < 6 and rows == 6:
+        J = J[:3, :]
 
     try:
         s = np.linalg.svd(J, compute_uv=False)
@@ -274,6 +290,14 @@ def compute_g_iso(
         return 0.0
 
     J = np.asarray(J, dtype=np.float32)
+
+    col_norms = np.linalg.norm(J, axis=0)
+    J = J[:, col_norms > 1e-6]
+    # Use linear part only for underactuated arms
+    rows, cols = J.shape
+    if cols < 6 and rows == 6:
+        J = J[:3, :]
+
     try:
         s = np.linalg.svd(J, compute_uv=False)
     except np.linalg.LinAlgError:

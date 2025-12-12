@@ -1,10 +1,11 @@
-# configs/data_gen_single.yaml
+# configs/data_gen_single_rm65b.yaml
 
 logging:
   log_dir: "logs/sim_single"
 
 data:
   urdf_root: "D:/code/mcfp/data/urdf/rm_65_b_description/urdf"
+
   capability_root: "data/capability"
 
 sim:
@@ -45,7 +46,7 @@ grid:
     # Event-based Convergence Criteria
     improvement_threshold: 0.01    # 1% improvement in g_man counts as a "Significant Event"
     stability_window: 10000        # Sliding window size to measure update rate
-    min_update_rate: 0.01        # Stop if < 0.1% of samples in window are significant
+    min_update_rate: 0.015        # Stop if < 0.1% of samples in window are significant
     
     progress_interval: 10000       # Log frequency
 

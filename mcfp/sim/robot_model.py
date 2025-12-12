@@ -6,6 +6,7 @@ import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
+from scipy.spatial.transform import Rotation as R
 
 import numpy as np
 
@@ -120,7 +121,7 @@ class RobotModel:
         Logic Hierarchy:
         1. Explicit Primitive: Use <collision>/<geometry>/{cylinder, sphere} radius.
         2. Inertial Estimation: r ~ sqrt(2*I/m).
-           - Clamped between [0.02, 0.12] meters (Physical limits).
+           - Clamped between [0.005, 0.03] meters (Physical limits).
            - Constrained by Link Length (Aspect Ratio check).
         3. Fallback: 0.03m (safe default for typical arms).
 
@@ -143,8 +144,8 @@ class RobotModel:
         link_lengths = self._estimate_link_lengths(root)
 
         # 2. Defaults
-        MIN_RADIUS = 0.02  # 2cm - minimum physical thickness
-        MAX_RADIUS = 0.12  # 12cm - max reasonable thickness for arm links
+        MIN_RADIUS = 0.005  # 0.5cm - minimum physical thickness
+        MAX_RADIUS = 0.002  # 3cm - max reasonable thickness for arm links
         DEFAULT_RADIUS = 0.03 # 3cm - safe fallback
 
         for link in root.findall(".//link"):
@@ -412,3 +413,103 @@ class RobotModel:
 
             self._joint_names.append(name)
             self._joint_limits.append((lower, upper))
+
+    # ------------------------------------------------------------------
+    # Visual Assets Parsing (The "Ground Truth" Fix)
+    # ------------------------------------------------------------------
+
+
+    def get_link_visual_data(self, mesh_dir: Path = None) -> Dict[str, Tuple[Path, np.ndarray, np.ndarray]]:
+        """
+        Parse URDF to extract mesh paths, scaling factors, AND visual origin transforms.
+        
+        Returns:
+            Dict[link_name, (mesh_path, scale_array, origin_matrix)]
+        """
+        mapping = {}
+        # Determine package root assuming standard ROS layout
+        urdf_dir = self.urdf_path.parent
+        package_root = urdf_dir.parent 
+        
+        try:
+            tree = ET.parse(self.urdf_path)
+            root = tree.getroot()
+        except Exception as exc:
+            self.logger.error(f"[RobotModel] Failed to parse URDF: {exc}")
+            return {}
+
+        for link in root.findall(".//link"):
+            name = link.attrib.get("name")
+            if not name: continue
+
+            visual = link.find("visual")
+            if visual is not None:
+                # === 1. Parse Origin (XYZ + RPY) ===
+                origin = visual.find("origin")
+                T_visual = np.eye(4)
+                if origin is not None:
+                    xyz_str = origin.attrib.get("xyz", "0 0 0")
+                    rpy_str = origin.attrib.get("rpy", "0 0 0")
+                    try:
+                        xyz = np.fromstring(xyz_str, sep=' ')
+                        rpy = np.fromstring(rpy_str, sep=' ')
+                        
+                        # Build Transform Matrix
+                        T_visual[:3, 3] = xyz
+                        # URDF uses extrinsic xyz Euler angles
+                        rot = R.from_euler('xyz', rpy).as_matrix()
+                        T_visual[:3, :3] = rot
+                    except Exception:
+                        pass # Keep identity on error
+
+                # === 2. Parse Geometry & Path ===
+                geo = visual.find("geometry")
+                if geo is not None:
+                    mesh = geo.find("mesh")
+                    if mesh is not None and "filename" in mesh.attrib:
+                        raw_path = mesh.attrib["filename"]
+                        final_path = None
+
+                        if raw_path.startswith("package://"):
+                            path_no_prefix = raw_path.replace("package://", "")
+                            parts = path_no_prefix.split("/", 1)
+                            if len(parts) == 2:
+                                rel_path = parts[1]
+                                candidate = package_root / rel_path
+                                if candidate.exists():
+                                    final_path = candidate
+                                else:
+                                    # Fallback to mesh_dir if provided
+                                    if mesh_dir:
+                                        candidate_fallback = Path(mesh_dir) / Path(rel_path).name
+                                        if candidate_fallback.exists():
+                                            final_path = candidate_fallback
+                        
+                        elif not Path(raw_path).is_absolute():
+                            candidate = urdf_dir / raw_path
+                            if candidate.exists():
+                                final_path = candidate
+                        
+                        else:
+                            candidate = Path(raw_path)
+                            if candidate.exists():
+                                final_path = candidate
+
+                        if final_path:
+                            # === 3. Parse Scale ===
+                            scale_str = mesh.attrib.get("scale", "1.0 1.0 1.0")
+                            try:
+                                scale_arr = np.fromstring(scale_str, sep=' ')
+                                if scale_arr.shape != (3,): scale_arr = np.array([1.0, 1.0, 1.0])
+                            except ValueError:
+                                scale_arr = np.array([1.0, 1.0, 1.0])
+
+                            # === Return 3 items: Path, Scale, Transform ===
+                            mapping[name] = (final_path, scale_arr, T_visual)
+                        else:
+                            self.logger.warning(
+                                f"[RobotModel] Could not resolve mesh for link '{name}': {raw_path}"
+                            )
+
+        self.logger.info(f"[RobotModel] Parsed {len(mapping)} visual assets with transforms from URDF.")
+        return mapping

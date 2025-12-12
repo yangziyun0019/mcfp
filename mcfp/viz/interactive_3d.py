@@ -27,15 +27,25 @@ class InteractiveCapabilityViz:
                  data_path: str, 
                  urdf_path: str,
                  mesh_dir: str,
-                 downsample_rate: int = 1):
+                 downsample_rate: int = 1,
+                 mesh_scale: float = 1.0,
+                 base_link: Optional[str] = None,
+                 end_effector_link: Optional[str] = None
+):
+        
         self.data_path = Path(data_path)
         self.urdf_path = Path(urdf_path)
         self.mesh_dir = Path(mesh_dir)
         
+        self.mesh_scale = float(mesh_scale)
+        self.base_link_name = base_link
+        self.end_effector_name = end_effector_link
+        self.downsample_rate = downsample_rate
+        
         # Hyperparameters
-        self.safety_cutoff = 0.2
-        self.gamma_safety = 0.6
-        self.gamma_dexterity = 1.8
+        self.safety_cutoff = 0.1
+        self.gamma_safety = 0.8
+        self.gamma_dexterity = 1.2
 
         # 1. Load & Filter Data (Hard Filter Step)
         logger.info(f"Loading data from {self.data_path}...")
@@ -77,7 +87,13 @@ class InteractiveCapabilityViz:
 
         # 4. Init Robot
         logger.info(f"Loading RobotModel: {self.urdf_path}")
-        self.robot = RobotModel(self.urdf_path, logger=logger)
+        self.robot = RobotModel(
+            self.urdf_path, 
+            logger=logger,
+            base_link=self.base_link_name,
+            end_effector_link=self.end_effector_name
+        )
+        
         self.mesh_map = self._bind_meshes_to_links()
         
         # State & Storage
@@ -147,7 +163,6 @@ class InteractiveCapabilityViz:
         
         w = {'man': 0.4, 'iso': 0.15, 'sigma': 0.15, 'red': 0.15, 'rot': 0.15} 
         raw_dex = (np.power(n_man, w['man']) * np.power(n_iso, w['iso']) * np.power(n_sigma, w['sigma'])* np.power(n_red, w['red'])* np.power(n_rot, w['rot']))
-        
         # Gate dexterity by safety (still useful visually)
         dex_gated = raw_dex * (raw_safety > 0.01).astype(np.float32)
         dex_final = np.power(dex_gated, self.gamma_dexterity)
@@ -195,55 +210,32 @@ class InteractiveCapabilityViz:
 
     def _bind_meshes_to_links(self) -> Dict[str, pv.PolyData]:
         """
-        Load meshes and intelligently map them to URDF link names using fuzzy matching.
+        Load meshes using explicit URDF paths, scales, AND visual offsets.
         """
-        temp_q = np.zeros(self.robot.num_joints)
-        active_poses = self.robot.link_poses(temp_q)
-        urdf_link_names = list(active_poses.keys())
-
-        stls = list(self.mesh_dir.glob("*.stl"))
-        mapping = {}
+        # Note: Now unpacks 3 items
+        link_data_map = self.robot.get_link_visual_data(self.mesh_dir)
         
-        logger.info(f"Mapping {len(stls)} mesh files to {len(urdf_link_names)} URDF links...")
+        mapping = {}
+        logger.info(f"Binding meshes with URDF visual transforms...")
 
-        for stl_path in stls:
-            filename = stl_path.stem.lower() # e.g., "link_1" or "base_link"
-            mesh = None
+        for link_name, (file_path, scale_arr, T_visual) in link_data_map.items():
             try:
-                mesh = pv.read(stl_path)
-            except Exception as e:
-                logger.warning(f"Failed to load {stl_path}: {e}")
-                continue
-
-            matched_name = None
-
-            if "base" in filename:
-                matched_name = "base_link"
-
-            elif filename in urdf_link_names:
-                matched_name = filename
-
-            else:
-                clean_fname = filename.replace("_", "").replace("-", "")
-
-                for urdf_name in urdf_link_names:
-                    clean_urdf = urdf_name.lower().replace("_", "").replace("-", "")
-                    if clean_fname == clean_urdf:
-                        matched_name = urdf_name
-                        break
-
-                if matched_name is None:
-                    matches = difflib.get_close_matches(filename, urdf_link_names, n=1, cutoff=0.6)
-                    if matches:
-                        matched_name = matches[0]
-
-            if matched_name:
-                mapping[matched_name] = mesh
-                # logger.info(f"  [Match] File '{stl_path.name}' -> Link '{matched_name}'")
-            else:
-                mapping[filename] = mesh
-                logger.warning(f"  [No Match] File '{stl_path.name}' loaded as '{filename}' (No kinematic link found)")
+                mesh = pv.read(file_path)
                 
+                # 1. Apply Scale
+                if np.any(np.abs(scale_arr - 1.0) > 1e-6):
+                    mesh.scale(scale_arr, inplace=True)
+                
+                # 2. Apply Visual Origin Transform (The Fix for "Exploded" Robots)
+                # Check if T_visual is effectively identity to save compute
+                if not np.allclose(T_visual, np.eye(4)):
+                    mesh.transform(T_visual, inplace=True)
+                
+                mapping[link_name] = mesh
+                
+            except Exception as e:
+                logger.error(f"Failed to load mesh for '{link_name}': {e}")
+        
         return mapping
 
     def _update_robot_pose(self, q: np.ndarray, view_key: str):
