@@ -20,31 +20,43 @@ from mcfp.utils.logging import setup_logger
 # ---------------------------------------------------------------------------
 
 ROBOTS: List[Dict[str, Any]] = [
-    {
-        "urdf_path": r"D:\code\mcfp\data\urdf\rm_65_b_description\urdf\rm_65_b_description.urdf",
-        "output_dir": r"D:\code\mcfp\data\morph_specs\rm65",
-
-        "family": "rm65",
-        "robot_name": "rm65",
-        "base_link": "base_link",
-        "ee_link": "Link6",
-        "num_variants": 0,
-        "length_scale_range": (0.8, 1.2),
-        "joint_limit_scale_range": (0.6, 1.0),
-        "joint_limit_shift_fraction": 0.2,
-    },
     # {
-    #     "urdf_path": "urdf/wx200.urdf",
-    #     "output_dir": "data/morph_specs/wx200",
-    #     "family": "wx200",
-    #     "robot_name": "wx200",
+    #     "urdf_path": "/home/user/mcfp/data/urdf/rm_65_b_description/urdf/rm_65_b_description.urdf",
+    #     "output_dir": "/home/user/mcfp/data/morph_specs/rm65",
+
+    #     "family": "rm65",
+    #     "robot_name": "rm65",
     #     "base_link": "base_link",
-    #     "ee_link": "wrist_link",
-    #     "num_variants": 250,
+    #     "ee_link": "Link6",
+    #     "num_variants": 50,
     #     "length_scale_range": (0.8, 1.2),
     #     "joint_limit_scale_range": (0.6, 1.0),
     #     "joint_limit_shift_fraction": 0.2,
     # },
+    # {
+    #     "urdf_path": "/home/user/mcfp/data/urdf/interbotix_descriptions/urdf/wx200.urdf",
+    #     "output_dir": "/home/user/mcfp/data/morph_specs/wx200",
+    #     "family": "wx200",
+    #     "robot_name": "wx200",
+    #     "base_link": "/base_link",
+    #     "ee_link": "/ee_arm_link",
+    #     "num_variants": 50,
+    #     "length_scale_range": (0.8, 1.2),
+    #     "joint_limit_scale_range": (0.6, 1.0),
+    #     "joint_limit_shift_fraction": 0.2,
+    # },
+    {
+        "urdf_path": "/home/user/mcfp/data/urdf/open_manipulator_description/urdf/open_manipulator.urdf",
+        "output_dir": "/home/user/mcfp/data/morph_specs/open_manipulator",
+        "family": "open_manipulator",
+        "robot_name": "open_manipulator",
+        "base_link": "link1",
+        "ee_link": "end_effector_link",
+        "num_variants": 50,
+        "length_scale_range": (0.8, 1.2),
+        "joint_limit_scale_range": (0.6, 1.0),
+        "joint_limit_shift_fraction": 0.2,
+    },
 ]
 
 

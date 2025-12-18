@@ -1,0 +1,280 @@
+{
+  "meta": {
+    "robot_name": "wx200",
+    "family": "wx200",
+    "variant_id": "wx200_v0036",
+    "parent_variant_id": "wx200_v0036",
+    "source": "real",
+    "urdf_path": "/home/user/mcfp/data/urdf/interbotix_descriptions/urdf/wx200.urdf",
+    "dof": 5,
+    "base_link": "/base_link",
+    "ee_link": "/ee_arm_link"
+  },
+  "chain": {
+    "links": [
+      {
+        "index": 0,
+        "name": "/base_link",
+        "length_estimate": 0.0,
+        "radius_estimate": 0.019
+      },
+      {
+        "index": 1,
+        "name": "/shoulder_link",
+        "length_estimate": 0.08447688002498592,
+        "radius_estimate": 0.022417049168641515
+      },
+      {
+        "index": 2,
+        "name": "/upper_arm_link",
+        "length_estimate": 0.031235075067772334,
+        "radius_estimate": 0.015354888131634525
+      },
+      {
+        "index": 3,
+        "name": "/forearm_link",
+        "length_estimate": 0.21143034814336448,
+        "radius_estimate": 0.019486168822668144
+      },
+      {
+        "index": 4,
+        "name": "/wrist_link",
+        "length_estimate": 0.21595719769969204,
+        "radius_estimate": 0.005932602729649103
+      },
+      {
+        "index": 5,
+        "name": "/gripper_link",
+        "length_estimate": 0.07144606695083744,
+        "radius_estimate": 0.004934854206036133
+      },
+      {
+        "index": 6,
+        "name": "/ee_arm_link",
+        "length_estimate": 0.043,
+        "radius_estimate": 0.019
+      }
+    ],
+    "joints": [
+      {
+        "name": "waist",
+        "type": "revolute",
+        "parent_link": "/base_link",
+        "child_link": "/shoulder_link",
+        "origin_xyz": [
+          0.0,
+          0.0,
+          0.08447688002498592
+        ],
+        "origin_rpy": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": -3.141592653589793,
+        "limit_upper": 0.41872775955608654,
+        "is_actuated": true
+      },
+      {
+        "name": "shoulder",
+        "type": "revolute",
+        "parent_link": "/shoulder_link",
+        "child_link": "/upper_arm_link",
+        "origin_xyz": [
+          0.0,
+          0.0,
+          0.031235075067772334
+        ],
+        "origin_rpy": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "limit_lower": -0.42565630512803876,
+        "limit_upper": 1.9722220547535925,
+        "is_actuated": true
+      },
+      {
+        "name": "elbow",
+        "type": "revolute",
+        "parent_link": "/upper_arm_link",
+        "child_link": "/forearm_link",
+        "origin_xyz": [
+          0.05127939163860038,
+          0.0,
+          0.20511756655440153
+        ],
+        "origin_rpy": [
+          3.141592653589793,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "limit_lower": -0.3306076732298422,
+        "limit_upper": 1.8849555921538759,
+        "is_actuated": true
+      },
+      {
+        "name": "wrist_angle",
+        "type": "revolute",
+        "parent_link": "/forearm_link",
+        "child_link": "/wrist_link",
+        "origin_xyz": [
+          0.21595719769969204,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "limit_lower": -1.4397041318370545,
+        "limit_upper": 1.7453292519943295,
+        "is_actuated": true
+      },
+      {
+        "name": "wrist_rotate",
+        "type": "revolute",
+        "parent_link": "/wrist_link",
+        "child_link": "/gripper_link",
+        "origin_xyz": [
+          0.07144606695083744,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          -3.141592653589793,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "limit_lower": -0.5349982537953237,
+        "limit_upper": 3.141592653589793,
+        "is_actuated": true
+      },
+      {
+        "name": "ee_arm",
+        "type": "fixed",
+        "parent_link": "/gripper_link",
+        "child_link": "/ee_arm_link",
+        "origin_xyz": [
+          0.043,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "limit_lower": null,
+        "limit_upper": null,
+        "is_actuated": false
+      }
+    ]
+  },
+  "graph": {
+    "num_nodes": 7,
+    "edges": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        5,
+        6
+      ]
+    ]
+  },
+  "morphology": {
+    "variant_id": "wx200_v0036",
+    "parent_variant_id": "wx200_v0036",
+    "actuated_joint_names": [
+      "waist",
+      "shoulder",
+      "elbow",
+      "wrist_angle",
+      "wrist_rotate"
+    ],
+    "length_scale": [
+      1.1798446930863955,
+      0.8081520069281329,
+      1.0255878327720076,
+      1.0797859884984602,
+      1.0991702607821143
+    ],
+    "joint_limit_scale": [
+      0.6797442729450132,
+      0.6609529383139161,
+      0.6871858163626015,
+      0.9067592393424964,
+      0.645813148551559
+    ],
+    "joint_limit_shift": [
+      -1.7167518546477019,
+      0.805416913233227,
+      0.7438549672581013,
+      0.5256004009510474,
+      1.4938835892859479
+    ],
+    "r_vector": null,
+    "notes": {
+      "generated_from": "perturbation",
+      "materialize_chain": true,
+      "length_scale_range": [
+        0.8,
+        1.2
+      ],
+      "joint_limit_scale_range": [
+        0.6,
+        1.0
+      ],
+      "joint_limit_shift_fraction": 0.2
+    }
+  }
+}

@@ -13,6 +13,7 @@ from mcfp.sim.robot_model import RobotModel
 from mcfp.sim.collision import SelfCollisionChecker
 from mcfp.sim.indicators import (
     compute_g_self,
+    compute_g_selfpass,
     compute_g_lim,
     compute_g_man,
     compute_g_sigma_min,
@@ -315,6 +316,8 @@ def _evaluate_grid_hybrid(
     count_valid = np.zeros(num_cells, dtype=np.int32)
     sum_g_self = np.zeros(num_cells, dtype=np.float32)
     sum_g_lim = np.zeros(num_cells, dtype=np.float32)
+    self_attempts = np.zeros(num_cells, dtype=np.int32)
+    self_pass = np.zeros(num_cells, dtype=np.int32)
     
     max_g_man = np.zeros(num_cells, dtype=np.float32)
     max_g_iso = np.zeros(num_cells, dtype=np.float32)
@@ -344,29 +347,34 @@ def _evaluate_grid_hybrid(
         # A. Sample
         q = low + np.random.rand(robot.num_joints) * span
         
-        # B. Check Validity (Self-Collision)
-        # Note: radius handled inside checker
-        val_g_self = compute_g_self(q, self_checker, d_max=d_max)
-        if val_g_self <= 0.0:
-            # Collision -> Invalid. Record as non-event (0) unless we skip entirely.
-            # To measure "rate per sample attempt", we append 0.
-            update_events.append(0)
-            continue
-            
-        # C. FK
+        # B. FK (map sample to a workspace cell first)
         try:
-            pos, ori = robot.fk(q) 
+            pos, ori = robot.fk(q)
         except Exception:
             update_events.append(0)
             continue
-            
+
         idx = _position_to_cell_index(pos, grid_meta)
         if idx is None:
             update_events.append(0)
             continue
 
+        # Count an "attempt" once the sample is mapped to a valid cell
+        self_attempts[idx] += 1
+
+        # C. Check Validity (Self-Collision)
+        # Note: radius handled inside checker
+        val_g_self = compute_g_self(q, self_checker, d_max=d_max)
+        if val_g_self <= 0.0:
+            # Collision -> Invalid attempt for this cell
+            update_events.append(0)
+            continue
+
+        # Passed self-collision for this cell
+        self_pass[idx] += 1
+
         cell_quats[idx].append(np.array(ori, dtype=np.float32))
-            
+   
         # D. Compute Indicators
         val_g_lim = compute_g_lim(q, joint_limits)
         val_g_man = compute_g_man(q, robot)
@@ -484,6 +492,9 @@ def _evaluate_grid_hybrid(
         # compute_g_rot handles the batch processing internally
         g_rot[idx] = compute_g_rot(cell_quats[idx])
 
+    # Self-collision pass rate per cell (independent from avg_g_self aggregation)
+    g_selfpass = compute_g_selfpass(self_pass=self_pass, self_attempts=self_attempts)
+
     cap_data = {
         "cell_centers": cell_centers,
         "q_star": q_star,
@@ -493,7 +504,8 @@ def _evaluate_grid_hybrid(
         "g_red": g_red,                       # [0,1] Density
         "g_margin": g_margin,                 # [0,1] Boundary Dist (Updated via EDT)
         
-        "g_self": avg_g_self,                 # [0,1] Avg Safety
+        "g_self": avg_g_self,                 # [0,1] Avg Safety (clearance-based)
+        "g_selfpass": g_selfpass,             # [0,1] Pass rate (per-cell)
         "g_lim": avg_g_lim,                   # [0,1] Avg Margin
 
         "g_rot": g_rot,                       # [0, 1] Dexterity

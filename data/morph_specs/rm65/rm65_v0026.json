@@ -1,0 +1,284 @@
+{
+  "meta": {
+    "robot_name": "rm65",
+    "family": "rm65",
+    "variant_id": "rm65_v0026",
+    "parent_variant_id": "rm65_v0026",
+    "source": "real",
+    "urdf_path": "/home/user/mcfp/data/urdf/rm_65_b_description/urdf/rm_65_b_description.urdf",
+    "dof": 6,
+    "base_link": "base_link",
+    "ee_link": "Link6"
+  },
+  "chain": {
+    "links": [
+      {
+        "index": 0,
+        "name": "base_link",
+        "length_estimate": 0.0,
+        "radius_estimate": 0.03
+      },
+      {
+        "index": 1,
+        "name": "Link1",
+        "length_estimate": 0.2787114195310398,
+        "radius_estimate": 0.03476649723879914
+      },
+      {
+        "index": 2,
+        "name": "Link2",
+        "length_estimate": 0.0,
+        "radius_estimate": 0.026966876850115912
+      },
+      {
+        "index": 3,
+        "name": "Link3",
+        "length_estimate": 0.28321932127202976,
+        "radius_estimate": 0.023967829659582177
+      },
+      {
+        "index": 4,
+        "name": "Link4",
+        "length_estimate": 0.1745086017246378,
+        "radius_estimate": 0.012405244794227457
+      },
+      {
+        "index": 5,
+        "name": "Link5",
+        "length_estimate": 0.0,
+        "radius_estimate": 0.014745286335619752
+      },
+      {
+        "index": 6,
+        "name": "Link6",
+        "length_estimate": 0.12852066123234354,
+        "radius_estimate": 0.00433772758968881
+      }
+    ],
+    "joints": [
+      {
+        "name": "joint1",
+        "type": "revolute",
+        "parent_link": "base_link",
+        "child_link": "Link1",
+        "origin_xyz": [
+          0.0,
+          0.0,
+          0.2787114195310398
+        ],
+        "origin_rpy": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": -3.1,
+        "limit_upper": 1.8337467251843906,
+        "is_actuated": true
+      },
+      {
+        "name": "joint2",
+        "type": "revolute",
+        "parent_link": "Link1",
+        "child_link": "Link2",
+        "origin_xyz": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          1.5708,
+          -1.5708,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": -1.8279357790542428,
+        "limit_upper": 2.0506371318324144,
+        "is_actuated": true
+      },
+      {
+        "name": "joint3",
+        "type": "revolute",
+        "parent_link": "Link2",
+        "child_link": "Link3",
+        "origin_xyz": [
+          0.28321932127202976,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          0.0,
+          0.0,
+          1.5708
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": -2.355,
+        "limit_upper": 1.37622859548523,
+        "is_actuated": true
+      },
+      {
+        "name": "joint4",
+        "type": "revolute",
+        "parent_link": "Link3",
+        "child_link": "Link4",
+        "origin_xyz": [
+          0.0,
+          -0.1745086017246378,
+          0.0
+        ],
+        "origin_rpy": [
+          1.5708,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": -2.924554996846423,
+        "limit_upper": 1.504050817294195,
+        "is_actuated": true
+      },
+      {
+        "name": "joint5",
+        "type": "revolute",
+        "parent_link": "Link4",
+        "child_link": "Link5",
+        "origin_xyz": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          -1.5708,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": -2.0974175863352684,
+        "limit_upper": 1.1533115866880084,
+        "is_actuated": true
+      },
+      {
+        "name": "joint6",
+        "type": "revolute",
+        "parent_link": "Link5",
+        "child_link": "Link6",
+        "origin_xyz": [
+          0.0,
+          -0.12852066123234354,
+          0.0
+        ],
+        "origin_rpy": [
+          1.5708,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": -5.853421104255215,
+        "limit_upper": 5.168982752735223,
+        "is_actuated": true
+      }
+    ]
+  },
+  "graph": {
+    "num_nodes": 7,
+    "edges": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        5,
+        6
+      ]
+    ]
+  },
+  "morphology": {
+    "variant_id": "rm65_v0026",
+    "parent_variant_id": "rm65_v0026",
+    "actuated_joint_names": [
+      "joint1",
+      "joint2",
+      "joint3",
+      "joint4",
+      "joint5",
+      "joint6"
+    ],
+    "length_scale": [
+      1.1588832412933048,
+      0.8988958950038638,
+      1.1063254737188661,
+      0.8309933415458943,
+      0.9086860428328739,
+      0.8925045918912747
+    ],
+    "joint_limit_scale": [
+      0.897462176863834,
+      0.8550645747104625,
+      0.8085199251311929,
+      0.714291260345261,
+      0.7278838273675049,
+      0.8775799249196209
+    ],
+    "joint_limit_shift": [
+      -0.9483860230934951,
+      0.11135067638908587,
+      -0.5278358281987292,
+      -0.710252089776114,
+      -0.47205299982363,
+      -0.3422191757599956
+    ],
+    "r_vector": null,
+    "notes": {
+      "generated_from": "perturbation",
+      "materialize_chain": true,
+      "length_scale_range": [
+        0.8,
+        1.2
+      ],
+      "joint_limit_scale_range": [
+        0.6,
+        1.0
+      ],
+      "joint_limit_shift_fraction": 0.2
+    }
+  }
+}

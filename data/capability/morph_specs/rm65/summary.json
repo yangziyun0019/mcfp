@@ -1,0 +1,9 @@
+{
+  "family": "rm65",
+  "total_specs": 51,
+  "ok": 51,
+  "skipped": 0,
+  "failed": 0,
+  "elapsed_sec": 52596.32394981384,
+  "manifest": "data/capability/morph_specs/rm65/manifest.jsonl"
+}

@@ -47,7 +47,7 @@ class SelfCollisionChecker:
         # Pre-fetch link radii for capsule approximation
         self._link_radii: Dict[str, float] = robot.get_link_radii()
 
-        # 【新增】Ignored Pairs (Blacklist) - Populated by auto-calibration
+        # Ignored Pairs (Blacklist) - Populated by auto-calibration
         self._ignore_pairs: set[Tuple[str, str]] = set()
 
         # Internal flags to avoid spamming warnings in large-scale sampling.
@@ -308,7 +308,7 @@ class SelfCollisionChecker:
                     "link poses; returning a large placeholder distance."
                 )
                 self._warned_missing_links = True
-            return 1e3
+            return float("nan")
 
         segments, segment_links, link_to_segments = self._build_segments(poses)
 
@@ -334,7 +334,7 @@ class SelfCollisionChecker:
                         min_dist = d_surf
 
                 if not np.isfinite(min_dist):
-                    return 1e3
+                    return float("nan")
                 return float(max(0.0, min_dist))
 
             if not self._warned_no_pairs:
@@ -343,7 +343,7 @@ class SelfCollisionChecker:
                     "returning safe distance."
                 )
                 self._warned_no_pairs = True
-            return 1e3
+            return float("nan")
 
         # Variables for Debugging the First Collision
         collision_detected = False
@@ -404,7 +404,7 @@ class SelfCollisionChecker:
                 self._warned_missing_links = True
 
             if not np.isfinite(min_dist):
-                return 1e3
+                return float("nan")
             
             final_dist = float(max(0.0, min_dist))
             
@@ -472,7 +472,7 @@ class SelfCollisionChecker:
                         debug_vals = (d_center, r_i + r_j)
 
         if not np.isfinite(min_dist):
-            return 1e3
+            return float("nan")
             
         final_dist = float(max(0.0, min_dist))
 

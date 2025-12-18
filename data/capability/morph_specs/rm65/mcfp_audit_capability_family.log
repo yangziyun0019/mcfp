@@ -1,0 +1,138 @@
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] Baseline: /home/user/mcfp/data/capability/morph_specs/rm65/rm65_base/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] Family root: /home/user/mcfp/data/capability/morph_specs/rm65
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] Output dir: /home/user/mcfp/data/capability/morph_specs/rm65
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] Selected probes: 9
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family]   - x_pos_extreme: [0.5692, -0.0601, 0.1820]
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family]   - x_neg_extreme: [-0.5708, 0.0899, 0.1520]
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family]   - y_pos_extreme: [-0.0608, 0.5699, 0.2720]
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family]   - y_neg_extreme: [-0.0308, -0.5701, 0.1820]
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family]   - z_pos_extreme: [-0.0008, -0.0001, 0.8420]
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family]   - z_neg_extreme: [-0.1508, 0.0899, -0.2680]
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family]   - central_best_man: [0.0892, -0.0901, 0.3320]
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family]   - low_margin_1: [0.5992, 0.1499, 0.3020]
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family]   - low_margin_2: [0.5992, 0.1499, 0.2720]
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] Found 51 specs with capability maps.
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [1/51] Auditing rm65_base -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_base/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [2/51] Auditing rm65_v0001 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0001/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [3/51] Auditing rm65_v0002 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0002/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [4/51] Auditing rm65_v0003 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0003/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [5/51] Auditing rm65_v0004 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0004/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [6/51] Auditing rm65_v0005 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0005/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [7/51] Auditing rm65_v0006 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0006/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [8/51] Auditing rm65_v0007 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0007/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [9/51] Auditing rm65_v0008 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0008/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [10/51] Auditing rm65_v0009 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0009/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [11/51] Auditing rm65_v0010 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0010/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [12/51] Auditing rm65_v0011 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0011/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [13/51] Auditing rm65_v0012 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0012/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [14/51] Auditing rm65_v0013 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0013/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [15/51] Auditing rm65_v0014 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0014/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [16/51] Auditing rm65_v0015 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0015/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [17/51] Auditing rm65_v0016 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0016/capability_map.npz
+[2025-12-17 10:18:06][INFO][mcfp.audit.capability_family] [18/51] Auditing rm65_v0017 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0017/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [19/51] Auditing rm65_v0018 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0018/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [20/51] Auditing rm65_v0019 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0019/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [21/51] Auditing rm65_v0020 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0020/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [22/51] Auditing rm65_v0021 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0021/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [23/51] Auditing rm65_v0022 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0022/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [24/51] Auditing rm65_v0023 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0023/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [25/51] Auditing rm65_v0024 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0024/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [26/51] Auditing rm65_v0025 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0025/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [27/51] Auditing rm65_v0026 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0026/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [28/51] Auditing rm65_v0027 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0027/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [29/51] Auditing rm65_v0028 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0028/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [30/51] Auditing rm65_v0029 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0029/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [31/51] Auditing rm65_v0030 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0030/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [32/51] Auditing rm65_v0031 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0031/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [33/51] Auditing rm65_v0032 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0032/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [34/51] Auditing rm65_v0033 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0033/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [35/51] Auditing rm65_v0034 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0034/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [36/51] Auditing rm65_v0035 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0035/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [37/51] Auditing rm65_v0036 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0036/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [38/51] Auditing rm65_v0037 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0037/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [39/51] Auditing rm65_v0038 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0038/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [40/51] Auditing rm65_v0039 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0039/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [41/51] Auditing rm65_v0040 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0040/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [42/51] Auditing rm65_v0041 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0041/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [43/51] Auditing rm65_v0042 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0042/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [44/51] Auditing rm65_v0043 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0043/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [45/51] Auditing rm65_v0044 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0044/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [46/51] Auditing rm65_v0045 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0045/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [47/51] Auditing rm65_v0046 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0046/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [48/51] Auditing rm65_v0047 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0047/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [49/51] Auditing rm65_v0048 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0048/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [50/51] Auditing rm65_v0049 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0049/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] [51/51] Auditing rm65_v0050 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0050/capability_map.npz
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] Wrote: /home/user/mcfp/data/capability/morph_specs/rm65/audit_global_summary.csv
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] Wrote: /home/user/mcfp/data/capability/morph_specs/rm65/audit_probe_table.csv
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] Wrote: /home/user/mcfp/data/capability/morph_specs/rm65/audit_summary.json
+[2025-12-17 10:18:07][INFO][mcfp.audit.capability_family] Done in 1.32s
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] Baseline: /home/user/mcfp/data/capability/morph_specs/rm65/rm65_base/capability_map.npz
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] Family root: /home/user/mcfp/data/capability/morph_specs/rm65
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] Output dir: /home/user/mcfp/data/capability/morph_specs/rm65
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] Selected probes: 9
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family]   - x_pos_extreme: [0.5692, -0.0601, 0.1820]
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family]   - x_neg_extreme: [-0.5708, 0.0899, 0.1520]
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family]   - y_pos_extreme: [-0.0608, 0.5699, 0.2720]
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family]   - y_neg_extreme: [-0.0308, -0.5701, 0.1820]
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family]   - z_pos_extreme: [-0.0008, -0.0001, 0.8420]
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family]   - z_neg_extreme: [-0.1508, 0.0899, -0.2680]
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family]   - central_best_man: [0.0892, -0.0901, 0.3320]
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family]   - low_margin_1: [0.5992, 0.1499, 0.3020]
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family]   - low_margin_2: [0.5992, 0.1499, 0.2720]
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] Found 51 specs with capability maps.
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] [1/51] Auditing rm65_base -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_base/capability_map.npz
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] [2/51] Auditing rm65_v0001 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0001/capability_map.npz
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] [3/51] Auditing rm65_v0002 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0002/capability_map.npz
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] [4/51] Auditing rm65_v0003 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0003/capability_map.npz
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] [5/51] Auditing rm65_v0004 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0004/capability_map.npz
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] [6/51] Auditing rm65_v0005 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0005/capability_map.npz
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] [7/51] Auditing rm65_v0006 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0006/capability_map.npz
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] [8/51] Auditing rm65_v0007 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0007/capability_map.npz
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] [9/51] Auditing rm65_v0008 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0008/capability_map.npz
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] [10/51] Auditing rm65_v0009 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0009/capability_map.npz
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] [11/51] Auditing rm65_v0010 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0010/capability_map.npz
+[2025-12-17 17:50:18][INFO][mcfp.audit.capability_family] [12/51] Auditing rm65_v0011 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0011/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [13/51] Auditing rm65_v0012 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0012/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [14/51] Auditing rm65_v0013 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0013/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [15/51] Auditing rm65_v0014 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0014/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [16/51] Auditing rm65_v0015 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0015/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [17/51] Auditing rm65_v0016 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0016/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [18/51] Auditing rm65_v0017 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0017/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [19/51] Auditing rm65_v0018 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0018/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [20/51] Auditing rm65_v0019 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0019/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [21/51] Auditing rm65_v0020 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0020/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [22/51] Auditing rm65_v0021 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0021/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [23/51] Auditing rm65_v0022 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0022/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [24/51] Auditing rm65_v0023 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0023/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [25/51] Auditing rm65_v0024 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0024/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [26/51] Auditing rm65_v0025 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0025/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [27/51] Auditing rm65_v0026 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0026/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [28/51] Auditing rm65_v0027 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0027/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [29/51] Auditing rm65_v0028 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0028/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [30/51] Auditing rm65_v0029 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0029/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [31/51] Auditing rm65_v0030 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0030/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [32/51] Auditing rm65_v0031 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0031/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [33/51] Auditing rm65_v0032 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0032/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [34/51] Auditing rm65_v0033 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0033/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [35/51] Auditing rm65_v0034 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0034/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [36/51] Auditing rm65_v0035 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0035/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [37/51] Auditing rm65_v0036 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0036/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [38/51] Auditing rm65_v0037 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0037/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [39/51] Auditing rm65_v0038 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0038/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [40/51] Auditing rm65_v0039 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0039/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [41/51] Auditing rm65_v0040 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0040/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [42/51] Auditing rm65_v0041 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0041/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [43/51] Auditing rm65_v0042 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0042/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [44/51] Auditing rm65_v0043 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0043/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [45/51] Auditing rm65_v0044 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0044/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [46/51] Auditing rm65_v0045 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0045/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [47/51] Auditing rm65_v0046 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0046/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [48/51] Auditing rm65_v0047 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0047/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [49/51] Auditing rm65_v0048 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0048/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [50/51] Auditing rm65_v0049 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0049/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] [51/51] Auditing rm65_v0050 -> /home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0050/capability_map.npz
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] Wrote: /home/user/mcfp/data/capability/morph_specs/rm65/audit_global_summary.csv
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] Wrote: /home/user/mcfp/data/capability/morph_specs/rm65/audit_probe_table.csv
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] Wrote: /home/user/mcfp/data/capability/morph_specs/rm65/audit_summary.json
+[2025-12-17 17:50:19][INFO][mcfp.audit.capability_family] Done in 1.28s

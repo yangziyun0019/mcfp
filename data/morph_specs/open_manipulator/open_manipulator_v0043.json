@@ -1,0 +1,242 @@
+{
+  "meta": {
+    "robot_name": "open_manipulator",
+    "family": "open_manipulator",
+    "variant_id": "open_manipulator_v0043",
+    "parent_variant_id": "open_manipulator_v0043",
+    "source": "real",
+    "urdf_path": "/home/user/mcfp/data/urdf/open_manipulator_description/urdf/open_manipulator.urdf",
+    "dof": 4,
+    "base_link": "link1",
+    "ee_link": "end_effector_link"
+  },
+  "chain": {
+    "links": [
+      {
+        "index": 0,
+        "name": "link1",
+        "length_estimate": 0.0,
+        "radius_estimate": 0.00422969498506295
+      },
+      {
+        "index": 1,
+        "name": "link2",
+        "length_estimate": 0.016872504458167327,
+        "radius_estimate": 0.004343440254505375
+      },
+      {
+        "index": 2,
+        "name": "link3",
+        "length_estimate": 0.04879677427702934,
+        "radius_estimate": 0.012826370725329323
+      },
+      {
+        "index": 3,
+        "name": "link4",
+        "length_estimate": 0.11521030715583232,
+        "radius_estimate": 0.011697517511365121
+      },
+      {
+        "index": 4,
+        "name": "link5",
+        "length_estimate": 0.13649968724831732,
+        "radius_estimate": 0.010048488252517196
+      },
+      {
+        "index": 5,
+        "name": "end_effector_link",
+        "length_estimate": 0.126,
+        "radius_estimate": 0.019
+      }
+    ],
+    "joints": [
+      {
+        "name": "joint1",
+        "type": "revolute",
+        "parent_link": "link1",
+        "child_link": "link2",
+        "origin_xyz": [
+          0.0097300898224335,
+          0.0,
+          0.013784293915114126
+        ],
+        "origin_rpy": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": -1.59514107721119,
+        "limit_upper": 2.827433388230814,
+        "is_actuated": true
+      },
+      {
+        "name": "joint2",
+        "type": "revolute",
+        "parent_link": "link2",
+        "child_link": "link3",
+        "origin_xyz": [
+          0.0,
+          0.0,
+          0.04879677427702934
+        ],
+        "origin_rpy": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "limit_lower": -0.8098450964028302,
+        "limit_upper": 1.5707963267948966,
+        "is_actuated": true
+      },
+      {
+        "name": "joint3",
+        "type": "revolute",
+        "parent_link": "link3",
+        "child_link": "link4",
+        "origin_xyz": [
+          0.021231938728430225,
+          0.0,
+          0.11323700655162786
+        ],
+        "origin_rpy": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "limit_lower": -0.5974869244978753,
+        "limit_upper": 1.1013178620196344,
+        "is_actuated": true
+      },
+      {
+        "name": "joint4",
+        "type": "revolute",
+        "parent_link": "link4",
+        "child_link": "link5",
+        "origin_xyz": [
+          0.13649968724831732,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "limit_lower": -1.790707812546182,
+        "limit_upper": 1.166641231132922,
+        "is_actuated": true
+      },
+      {
+        "name": "end_effector_joint",
+        "type": "fixed",
+        "parent_link": "link5",
+        "child_link": "end_effector_link",
+        "origin_xyz": [
+          0.126,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": null,
+        "limit_upper": null,
+        "is_actuated": false
+      }
+    ]
+  },
+  "graph": {
+    "num_nodes": 6,
+    "edges": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        5
+      ]
+    ]
+  },
+  "morphology": {
+    "variant_id": "open_manipulator_v0043",
+    "parent_variant_id": "open_manipulator_v0043",
+    "actuated_joint_names": [
+      "joint1",
+      "joint2",
+      "joint3",
+      "joint4"
+    ],
+    "length_scale": [
+      0.810840818536125,
+      0.8201138533954511,
+      0.8846641136845926,
+      1.1008039294219139
+    ],
+    "joint_limit_scale": [
+      0.8570998592037342,
+      0.7516415456752559,
+      0.7307383219525234,
+      0.9327697140621091
+    ],
+    "joint_limit_shift": [
+      0.8282516817493775,
+      0.5634337300168619,
+      0.03200398300959409,
+      -0.7465557885356995
+    ],
+    "r_vector": null,
+    "notes": {
+      "generated_from": "perturbation",
+      "materialize_chain": true,
+      "length_scale_range": [
+        0.8,
+        1.2
+      ],
+      "joint_limit_scale_range": [
+        0.6,
+        1.0
+      ],
+      "joint_limit_shift_fraction": 0.2
+    }
+  }
+}

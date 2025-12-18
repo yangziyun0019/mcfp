@@ -108,7 +108,25 @@ def compute_g_self(
 
     return float(np.clip(dist / float(d_max), 0.0, 1.0))
 
+def compute_g_selfpass(
+    self_pass: np.ndarray,
+    self_attempts: np.ndarray,
+) -> np.ndarray:
+    """Compute per-cell self-collision pass rate indicator in [0, 1].
 
+    Args:
+        self_pass: (N,) int array, number of collision-free samples mapped to each cell.
+        self_attempts: (N,) int array, number of attempted samples mapped to each cell.
+
+    Returns:
+        g_selfpass: (N,) float32 array in [0, 1], defined as pass / max(attempts, 1).
+    """
+    p = np.asarray(self_pass, dtype=np.float32).reshape(-1)
+    a = np.asarray(self_attempts, dtype=np.float32).reshape(-1)
+
+    denom = np.maximum(a, 1.0)
+    out = p / denom
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
 
 def compute_g_lim(
     q: Sequence[float],

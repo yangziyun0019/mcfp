@@ -4,9 +4,13 @@ logging:
   log_dir: "logs/sim_single"
 
 data:
-  urdf_root: "D:/code/mcfp/data/urdf/open_manipulator_description/urdf"
+  # URDF path
+  urdf_root: "/home/user/mcfp/data/urdf/open_manipulator_description/urdf"
+  
+  # Morphology JSON path (Ensure this directory exists)
+  json_root: "/home/user/mcfp/data/morph_specs/open_manipulator"
 
-  capability_root: "data/capability"
+  capability_root: "data/capability/morph_specs/open_manipulator/open_manipulator_base"
 
 sim:
   base_link: "link1"
@@ -25,7 +29,14 @@ sim:
 
 robot:
   name: "open_manipulator"
+
+  # [Option 1] Use URDF
+  # source_type: "urdf"
   urdf_filename: "open_manipulator.urdf"
+
+  # [Option 2] Use JSON Spec (Uncomment this to switch mode)
+  source_type: "json"
+  spec_filename: "open_manipulator_base.json"
 
 grid:
   # Workspace bounding box mode: "auto" (scouting) or "manual"

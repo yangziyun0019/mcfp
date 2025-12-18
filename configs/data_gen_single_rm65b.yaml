@@ -5,12 +5,12 @@ logging:
 
 data:
   # URDF path
-  urdf_root: "D:/code/mcfp/data/urdf/rm_65_b_description/urdf"
+  urdf_root: "/home/user/mcfp/data/urdf/rm_65_b_description/urdf"
   
   # Morphology JSON path (Ensure this directory exists)
-  json_root: "D:/code/mcfp/data/morph_specs/rm65"
+  json_root: "/home/user/mcfp/data/morph_specs/rm65"
 
-  capability_root: "data/capability"
+  capability_root: "data/capability/morph_specs/rm65/rm65_v0010"
 
 sim:
   base_link: "base_link"
@@ -28,7 +28,7 @@ sim:
     k_sigma: 0.10          # scale for singularity distance
 
 robot:
-  name: "rm_65_b"
+  name: "rm_65"
 
   # [Option 1] Use URDF
   # source_type: "urdf"

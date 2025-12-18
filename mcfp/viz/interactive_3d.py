@@ -141,7 +141,7 @@ class InteractiveCapabilityViz:
         
         # Safety components
         # Note: g_ws is NOT used for calculation anymore, only for hard filtering in __init__
-        n_self = self._normalize_sub_metric(d.get('g_self', np.zeros(n)), 'g_self')
+        n_self = self._normalize_sub_metric(d.get('g_selfpass', np.zeros(n)), 'g_selfpass')
         n_lim = self._normalize_sub_metric(d.get('g_lim', np.zeros(n)), 'g_lim')
         
         # Revised Logic: Safety is purely determined by collision and limits
@@ -242,6 +242,15 @@ class InteractiveCapabilityViz:
         """
         Update robot pose. Handles base_link separately.
         """
+
+        q = np.asarray(q, dtype=np.float32).reshape(-1)
+        dof = int(getattr(self.robot, "num_joints", len(q)))
+        if q.shape[0] < dof:
+            q_full = np.zeros((dof,), dtype=np.float32)
+            q_full[: q.shape[0]] = q
+            q = q_full
+        elif q.shape[0] > dof:
+            q = q[:dof]
 
         poses = self.robot.link_poses(q)
 

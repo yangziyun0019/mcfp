@@ -1,12 +1,16 @@
-# configs/data_gen_single_rm65b.yaml
+# configs/data_gen_single_wx200.yaml
 
 logging:
   log_dir: "logs/sim_single"
 
 data:
-  urdf_root: "D:/code/mcfp/data/urdf/interbotix_descriptions/urdf"
+  # URDF path
+  urdf_root: "/home/user/mcfp/data/urdf/interbotix_descriptions/urdf"
+  
+  # Morphology JSON path (Ensure this directory exists)
+  json_root: "/home/user/mcfp/data/morph_specs/wx200"
 
-  capability_root: "data/capability"
+  capability_root: "data/capability/morph_specs/wx200/wx200_base"
 
 sim:
   base_link: "/base_link"
@@ -16,7 +20,7 @@ sim:
   # safe_clearance now acts as the normalization denominator (d_max) for g_self
   # and implies the "safety airbag" thickness.
   self_collision:
-    safe_clearance: 0.005   # [m], surface distance for g_self = 1.0
+    safe_clearance: 0.05   # [m], surface distance for g_self = 1.0
 
   # Indicator scaling parameters
   indicators:
@@ -25,7 +29,14 @@ sim:
 
 robot:
   name: "wx200"
+
+  # [Option 1] Use URDF
+  # source_type: "urdf"
   urdf_filename: "wx200.urdf"
+
+  # [Option 2] Use JSON Spec (Uncomment this to switch mode)
+  source_type: "json"
+  spec_filename: "wx200_base.json"
 
 grid:
   # Workspace bounding box mode: "auto" (scouting) or "manual"

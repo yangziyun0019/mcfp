@@ -1,0 +1,9 @@
+{
+  "family": "open_manipulator",
+  "total_specs": 51,
+  "ok": 50,
+  "skipped": 1,
+  "failed": 0,
+  "elapsed_sec": 9575.484590768814,
+  "manifest": "data/capability/morph_specs/open_manipulator/manifest.jsonl"
+}

@@ -1,0 +1,26 @@
+name: mcfp_sim
+channels:
+  - conda-forge
+channel_priority: strict
+
+dependencies:
+  - python=3.10
+  - pip
+
+  # Core scientific stack
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - pyyaml
+  - omegaconf
+
+  # Geometry / viz / sim
+  - pybullet
+  - trimesh
+  - pyvista
+  - vtk
+
+  # Install the repo itself (editable)
+  # - pip:
+  #     - -e .

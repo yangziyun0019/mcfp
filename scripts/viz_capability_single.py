@@ -20,13 +20,13 @@ def main() -> None:
     file and then calls the plotting routine multiple times with different
     scalar fields, so that each indicator can be inspected separately.
     """
-    cfg = load_config("configs/data_gen_single.yaml")
+    cfg = load_config("configs/data_gen_single_wx200.yaml")
 
     urdf_root = Path(cfg.data.urdf_root)
     capability_root = Path(cfg.data.capability_root)
 
     urdf_path = urdf_root / cfg.robot.urdf_filename
-    cap_path = capability_root / cfg.robot.name / "capability_map.npz"
+    cap_path = capability_root /  "capability_map.npz"
 
     base_link = cfg.sim.base_link
     end_effector_link = cfg.sim.end_effector_link
@@ -42,7 +42,8 @@ def main() -> None:
         "g_red",                       
         "g_margin",                 
         
-        "g_self",                 
+        "g_self",
+        "g_selfpass",                 
         "g_lim",                   
         "g_rot",
         "g_man",                   

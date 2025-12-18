@@ -28,7 +28,9 @@ def main():
     
     # 2. Load Configuration
     # Adjust this path to your current active config file
-    config_rel_path = "configs/data_gen_single_rm65b.yaml" 
+    # config_rel_path = "configs/data_gen_single_rm65b.yaml" 
+    # config_rel_path = "configs/data_gen_single_wx200.yaml" 
+    config_rel_path = "configs/data_gen_single_openmanipulator.yaml" 
 
     config_path = PROJECT_ROOT / config_rel_path
     
@@ -46,7 +48,8 @@ def main():
 
     cap_root = PROJECT_ROOT / cfg.data.capability_root
     robot_name = cfg.robot.get("name", "unknown_robot")
-    data_path = cap_root / robot_name / "capability_map.npz"
+    data_path = cap_root /  "capability_map.npz"
+    # data_path = cap_root / robot_name / "capability_map.npz"
 
     # 4. Resolve URDF Paths (Critical for Visualization)
     # Visualization ALWAYS needs URDF for meshes, even if data gen was Spec-based.

@@ -1,0 +1,9 @@
+{
+  "family": "wx200",
+  "total_specs": 51,
+  "ok": 51,
+  "skipped": 0,
+  "failed": 0,
+  "elapsed_sec": 19396.124847888947,
+  "manifest": "data/capability/morph_specs/wx200/manifest.jsonl"
+}

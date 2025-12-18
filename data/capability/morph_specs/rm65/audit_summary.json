@@ -1,0 +1,621 @@
+{
+  "baseline": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_base/capability_map.npz",
+  "family_root": "/home/user/mcfp/data/capability/morph_specs/rm65",
+  "spec_count": 51,
+  "probe_count": 9,
+  "max_match_dist_m": 0.05,
+  "specs": {
+    "rm65_base": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_base/capability_map.npz",
+      "coverage": 0.43533215755437976,
+      "n_cells": 85050,
+      "n_reachable": 37025,
+      "span": [
+        1.3200000524520874,
+        1.3200000524520874,
+        1.2300000190734863
+      ],
+      "aabb_volume": 2.1431522369384766
+    },
+    "rm65_v0001": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0001/capability_map.npz",
+      "coverage": 0.3815718157181572,
+      "n_cells": 83025,
+      "n_reachable": 31680,
+      "span": [
+        1.3200000524520874,
+        1.3200000524520874,
+        1.2000000476837158
+      ],
+      "aabb_volume": 2.0908803939819336
+    },
+    "rm65_v0002": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0002/capability_map.npz",
+      "coverage": 0.34625078764965345,
+      "n_cells": 101568,
+      "n_reachable": 35168,
+      "span": [
+        1.350000023841858,
+        1.409999966621399,
+        1.350000023841858
+      ],
+      "aabb_volume": 2.5697250366210938
+    },
+    "rm65_v0003": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0003/capability_map.npz",
+      "coverage": 0.37138513513513516,
+      "n_cells": 59200,
+      "n_reachable": 21986,
+      "span": [
+        1.1699999570846558,
+        1.1699999570846558,
+        1.0800000429153442
+      ],
+      "aabb_volume": 1.4784120321273804
+    },
+    "rm65_v0004": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0004/capability_map.npz",
+      "coverage": 0.3206167800453515,
+      "n_cells": 110250,
+      "n_reachable": 35348,
+      "span": [
+        1.440000057220459,
+        1.4700000286102295,
+        1.3200000524520874
+      ],
+      "aabb_volume": 2.7941761016845703
+    },
+    "rm65_v0005": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0005/capability_map.npz",
+      "coverage": 0.41168587510050925,
+      "n_cells": 67158,
+      "n_reachable": 27648,
+      "span": [
+        1.2000000476837158,
+        1.2300000190734863,
+        1.1399999856948853
+      ],
+      "aabb_volume": 1.6826400756835938
+    },
+    "rm65_v0006": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0006/capability_map.npz",
+      "coverage": 0.3643295998260113,
+      "n_cells": 73568,
+      "n_reachable": 26803,
+      "span": [
+        1.2899999618530273,
+        1.2899999618530273,
+        1.1100000143051147
+      ],
+      "aabb_volume": 1.8471509218215942
+    },
+    "rm65_v0007": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0007/capability_map.npz",
+      "coverage": 0.43165767920398906,
+      "n_cells": 88642,
+      "n_reachable": 38263,
+      "span": [
+        1.350000023841858,
+        1.3799999952316284,
+        1.2000000476837158
+      ],
+      "aabb_volume": 2.235600233078003
+    },
+    "rm65_v0008": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0008/capability_map.npz",
+      "coverage": 0.3707644628099174,
+      "n_cells": 77440,
+      "n_reachable": 28712,
+      "span": [
+        1.2899999618530273,
+        1.2899999618530273,
+        1.1700000762939453
+      ],
+      "aabb_volume": 1.946997046470642
+    },
+    "rm65_v0009": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0009/capability_map.npz",
+      "coverage": 0.37356459330143543,
+      "n_cells": 75240,
+      "n_reachable": 28107,
+      "span": [
+        1.3200000524520874,
+        1.2899999618530273,
+        1.1100000143051147
+      ],
+      "aabb_volume": 1.8901081085205078
+    },
+    "rm65_v0010": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0010/capability_map.npz",
+      "coverage": 0.44566774078052274,
+      "n_cells": 67032,
+      "n_reachable": 29874,
+      "span": [
+        1.2300000190734863,
+        1.2300000190734863,
+        1.1100000143051147
+      ],
+      "aabb_volume": 1.6793190240859985
+    },
+    "rm65_v0011": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0011/capability_map.npz",
+      "coverage": 0.44203140263515284,
+      "n_cells": 83942,
+      "n_reachable": 37105,
+      "span": [
+        1.3799999952316284,
+        1.3799999952316284,
+        1.1100000143051147
+      ],
+      "aabb_volume": 2.1138839721679688
+    },
+    "rm65_v0012": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0012/capability_map.npz",
+      "coverage": 0.3954830917874396,
+      "n_cells": 82800,
+      "n_reachable": 32746,
+      "span": [
+        1.350000023841858,
+        1.3200000524520874,
+        1.1699999570846558
+      ],
+      "aabb_volume": 2.084939956665039
+    },
+    "rm65_v0013": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0013/capability_map.npz",
+      "coverage": 0.43756613756613755,
+      "n_cells": 86940,
+      "n_reachable": 38042,
+      "span": [
+        1.3200000524520874,
+        1.350000023841858,
+        1.2300000190734863
+      ],
+      "aabb_volume": 2.1918601989746094
+    },
+    "rm65_v0014": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0014/capability_map.npz",
+      "coverage": 0.3836391647218536,
+      "n_cells": 65559,
+      "n_reachable": 25151,
+      "span": [
+        1.2000000476837158,
+        1.2000000476837158,
+        1.1399999856948853
+      ],
+      "aabb_volume": 1.6416000127792358
+    },
+    "rm65_v0015": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0015/capability_map.npz",
+      "coverage": 0.2703081232492997,
+      "n_cells": 61404,
+      "n_reachable": 16598,
+      "span": [
+        1.2599999904632568,
+        1.2300000190734863,
+        0.9900000095367432
+      ],
+      "aabb_volume": 1.534301996231079
+    },
+    "rm65_v0016": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0016/capability_map.npz",
+      "coverage": 0.37679425837320574,
+      "n_cells": 68552,
+      "n_reachable": 25830,
+      "span": [
+        1.2899999618530273,
+        1.1100000143051147,
+        1.2000000476837158
+      ],
+      "aabb_volume": 1.7182800769805908
+    },
+    "rm65_v0017": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0017/capability_map.npz",
+      "coverage": 0.42261992559450645,
+      "n_cells": 61017,
+      "n_reachable": 25787,
+      "span": [
+        1.2599999904632568,
+        1.2599999904632568,
+        0.9600000381469727
+      ],
+      "aabb_volume": 1.5240960121154785
+    },
+    "rm65_v0018": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0018/capability_map.npz",
+      "coverage": 0.39852096351542027,
+      "n_cells": 79376,
+      "n_reachable": 31633,
+      "span": [
+        1.2899999618530273,
+        1.2899999618530273,
+        1.2000000476837158
+      ],
+      "aabb_volume": 1.9969199895858765
+    },
+    "rm65_v0019": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0019/capability_map.npz",
+      "coverage": 0.373825615352524,
+      "n_cells": 119850,
+      "n_reachable": 44803,
+      "span": [
+        1.5,
+        1.4700000286102295,
+        1.3799999952316284
+      ],
+      "aabb_volume": 3.0428998470306396
+    },
+    "rm65_v0020": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0020/capability_map.npz",
+      "coverage": 0.3515923710134497,
+      "n_cells": 88924,
+      "n_reachable": 31265,
+      "span": [
+        1.3799999952316284,
+        1.2599999904632568,
+        1.2899999618530273
+      ],
+      "aabb_volume": 2.243051767349243
+    },
+    "rm65_v0021": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0021/capability_map.npz",
+      "coverage": 0.409688995215311,
+      "n_cells": 71896,
+      "n_reachable": 29455,
+      "span": [
+        1.2899999618530273,
+        1.2599999904632568,
+        1.1100000143051147
+      ],
+      "aabb_volume": 1.8041939735412598
+    },
+    "rm65_v0022": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0022/capability_map.npz",
+      "coverage": 0.4205055849500294,
+      "n_cells": 85050,
+      "n_reachable": 35764,
+      "span": [
+        1.3200000524520874,
+        1.3200000524520874,
+        1.2300000190734863
+      ],
+      "aabb_volume": 2.1431522369384766
+    },
+    "rm65_v0023": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0023/capability_map.npz",
+      "coverage": 0.4099242833964305,
+      "n_cells": 73960,
+      "n_reachable": 30318,
+      "span": [
+        1.2599999904632568,
+        1.2599999904632568,
+        1.1699999570846558
+      ],
+      "aabb_volume": 1.8574919700622559
+    },
+    "rm65_v0024": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0024/capability_map.npz",
+      "coverage": 0.38005971087366436,
+      "n_cells": 63640,
+      "n_reachable": 24187,
+      "span": [
+        1.0800000429153442,
+        1.2599999904632568,
+        1.1699999570846558
+      ],
+      "aabb_volume": 1.592136025428772
+    },
+    "rm65_v0025": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0025/capability_map.npz",
+      "coverage": 0.43144851400717993,
+      "n_cells": 94987,
+      "n_reachable": 40982,
+      "span": [
+        1.3799999952316284,
+        1.3799999952316284,
+        1.2599999904632568
+      ],
+      "aabb_volume": 2.3995440006256104
+    },
+    "rm65_v0026": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0026/capability_map.npz",
+      "coverage": 0.4425009251088782,
+      "n_cells": 70262,
+      "n_reachable": 31091,
+      "span": [
+        1.2599999904632568,
+        1.2599999904632568,
+        1.1100000143051147
+      ],
+      "aabb_volume": 1.7622359991073608
+    },
+    "rm65_v0027": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0027/capability_map.npz",
+      "coverage": 0.39873600131752307,
+      "n_cells": 97152,
+      "n_reachable": 38738,
+      "span": [
+        1.409999966621399,
+        1.350000023841858,
+        1.2899999618530273
+      ],
+      "aabb_volume": 2.455514907836914
+    },
+    "rm65_v0028": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0028/capability_map.npz",
+      "coverage": 0.3981668611767385,
+      "n_cells": 70262,
+      "n_reachable": 27976,
+      "span": [
+        1.2599999904632568,
+        1.2599999904632568,
+        1.1100000143051147
+      ],
+      "aabb_volume": 1.7622359991073608
+    },
+    "rm65_v0029": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0029/capability_map.npz",
+      "coverage": 0.4190689981096408,
+      "n_cells": 93104,
+      "n_reachable": 39017,
+      "span": [
+        1.350000023841858,
+        1.350000023841858,
+        1.2899999618530273
+      ],
+      "aabb_volume": 2.351025104522705
+    },
+    "rm65_v0030": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0030/capability_map.npz",
+      "coverage": 0.37164683612763655,
+      "n_cells": 73960,
+      "n_reachable": 27487,
+      "span": [
+        1.2599999904632568,
+        1.2599999904632568,
+        1.1699999570846558
+      ],
+      "aabb_volume": 1.8574919700622559
+    },
+    "rm65_v0031": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0031/capability_map.npz",
+      "coverage": 0.4242873869509044,
+      "n_cells": 99072,
+      "n_reachable": 42035,
+      "span": [
+        1.409999966621399,
+        1.409999966621399,
+        1.2599999904632568
+      ],
+      "aabb_volume": 2.5050058364868164
+    },
+    "rm65_v0032": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0032/capability_map.npz",
+      "coverage": 0.3973894673306172,
+      "n_cells": 92778,
+      "n_reachable": 36869,
+      "span": [
+        1.3799999952316284,
+        1.3799999952316284,
+        1.2300000190734863
+      ],
+      "aabb_volume": 2.342411994934082
+    },
+    "rm65_v0033": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0033/capability_map.npz",
+      "coverage": 0.38878386893509764,
+      "n_cells": 88872,
+      "n_reachable": 34552,
+      "span": [
+        1.350000023841858,
+        1.350000023841858,
+        1.2300000190734863
+      ],
+      "aabb_volume": 2.2416751384735107
+    },
+    "rm65_v0034": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0034/capability_map.npz",
+      "coverage": 0.43433783511388835,
+      "n_cells": 79376,
+      "n_reachable": 34476,
+      "span": [
+        1.2899999618530273,
+        1.2899999618530273,
+        1.2000000476837158
+      ],
+      "aabb_volume": 1.9969199895858765
+    },
+    "rm65_v0035": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0035/capability_map.npz",
+      "coverage": 0.42781159258431983,
+      "n_cells": 71632,
+      "n_reachable": 30645,
+      "span": [
+        1.2899999618530273,
+        1.2899999618530273,
+        1.0800000429153442
+      ],
+      "aabb_volume": 1.7972279787063599
+    },
+    "rm65_v0036": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0036/capability_map.npz",
+      "coverage": 0.42704361363687643,
+      "n_cells": 88642,
+      "n_reachable": 37854,
+      "span": [
+        1.350000023841858,
+        1.3799999952316284,
+        1.2000000476837158
+      ],
+      "aabb_volume": 2.235600233078003
+    },
+    "rm65_v0037": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0037/capability_map.npz",
+      "coverage": 0.4282017958412098,
+      "n_cells": 84640,
+      "n_reachable": 36243,
+      "span": [
+        1.350000023841858,
+        1.350000023841858,
+        1.1699999570846558
+      ],
+      "aabb_volume": 2.1323249340057373
+    },
+    "rm65_v0038": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0038/capability_map.npz",
+      "coverage": 0.4075801749271137,
+      "n_cells": 108045,
+      "n_reachable": 44037,
+      "span": [
+        1.440000057220459,
+        1.440000057220459,
+        1.3200000524520874
+      ],
+      "aabb_volume": 2.737152099609375
+    },
+    "rm65_v0039": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0039/capability_map.npz",
+      "coverage": 0.4236753204683234,
+      "n_cells": 108045,
+      "n_reachable": 45776,
+      "span": [
+        1.440000057220459,
+        1.440000057220459,
+        1.3200000524520874
+      ],
+      "aabb_volume": 2.737152099609375
+    },
+    "rm65_v0040": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0040/capability_map.npz",
+      "coverage": 0.41055796055796057,
+      "n_cells": 83160,
+      "n_reachable": 34142,
+      "span": [
+        1.2899999618530273,
+        1.3200000524520874,
+        1.2300000190734863
+      ],
+      "aabb_volume": 2.0944440364837646
+    },
+    "rm65_v0041": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0041/capability_map.npz",
+      "coverage": 0.42025047258979203,
+      "n_cells": 84640,
+      "n_reachable": 35570,
+      "span": [
+        1.350000023841858,
+        1.350000023841858,
+        1.1699999570846558
+      ],
+      "aabb_volume": 2.1323249340057373
+    },
+    "rm65_v0042": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0042/capability_map.npz",
+      "coverage": 0.4017472622123785,
+      "n_cells": 81270,
+      "n_reachable": 32650,
+      "span": [
+        1.3200000524520874,
+        1.2599999904632568,
+        1.2300000190734863
+      ],
+      "aabb_volume": 2.045736074447632
+    },
+    "rm65_v0043": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0043/capability_map.npz",
+      "coverage": 0.4133658748911827,
+      "n_cells": 64328,
+      "n_reachable": 26591,
+      "span": [
+        1.2599999904632568,
+        1.2899999618530273,
+        0.9900000095367432
+      ],
+      "aabb_volume": 1.609145998954773
+    },
+    "rm65_v0044": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0044/capability_map.npz",
+      "coverage": 0.3940483036227717,
+      "n_cells": 83472,
+      "n_reachable": 32892,
+      "span": [
+        1.3799999952316284,
+        1.409999966621399,
+        1.0800000429153442
+      ],
+      "aabb_volume": 2.101464033126831
+    },
+    "rm65_v0045": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0045/capability_map.npz",
+      "coverage": 0.42439662373060183,
+      "n_cells": 90988,
+      "n_reachable": 38615,
+      "span": [
+        1.350000023841858,
+        1.350000023841858,
+        1.2599999904632568
+      ],
+      "aabb_volume": 2.2963500022888184
+    },
+    "rm65_v0046": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0046/capability_map.npz",
+      "coverage": 0.3319889707395366,
+      "n_cells": 97196,
+      "n_reachable": 32268,
+      "span": [
+        1.3799999952316284,
+        1.3799999952316284,
+        1.2899999618530273
+      ],
+      "aabb_volume": 2.4566760063171387
+    },
+    "rm65_v0047": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0047/capability_map.npz",
+      "coverage": 0.4262645991161616,
+      "n_cells": 101376,
+      "n_reachable": 43213,
+      "span": [
+        1.409999966621399,
+        1.409999966621399,
+        1.2899999618530273
+      ],
+      "aabb_volume": 2.5646488666534424
+    },
+    "rm65_v0048": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0048/capability_map.npz",
+      "coverage": 0.3439666238767651,
+      "n_cells": 46740,
+      "n_reachable": 16077,
+      "span": [
+        1.1100000143051147,
+        1.2000000476837158,
+        0.8700000047683716
+      ],
+      "aabb_volume": 1.1588400602340698
+    },
+    "rm65_v0049": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0049/capability_map.npz",
+      "coverage": 0.43800959490566443,
+      "n_cells": 92966,
+      "n_reachable": 40720,
+      "span": [
+        1.350000023841858,
+        1.3799999952316284,
+        1.2599999904632568
+      ],
+      "aabb_volume": 2.3473799228668213
+    },
+    "rm65_v0050": {
+      "cap_path": "/home/user/mcfp/data/capability/morph_specs/rm65/rm65_v0050/capability_map.npz",
+      "coverage": 0.4030454042081949,
+      "n_cells": 72240,
+      "n_reachable": 29116,
+      "span": [
+        1.2599999904632568,
+        1.2300000190734863,
+        1.1699999570846558
+      ],
+      "aabb_volume": 1.8132659196853638
+    }
+  }
+}
