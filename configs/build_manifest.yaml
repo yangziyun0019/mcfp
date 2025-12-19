@@ -1,0 +1,23 @@
+logging:
+  log_dir: "logs"
+
+data:
+  repo_root: "D:/code/mcfp"
+  morph_specs_root: "D:/code/mcfp/data/morph_specs"
+  capability_root: "D:/code/mcfp/data/capability/morph_specs"
+  required_cap_keys:
+    - cell_centers
+    - g_ws
+    - g_red
+    - g_margin
+    - g_self
+    - g_selfpass
+    - g_lim
+    - g_rot
+    - g_man
+    - g_iso
+    - g_sigma
+  grid_round_decimals: 6
+
+output:
+  manifest_path: "D:/code/mcfp/data/manifests/stage1_manifest.jsonl"

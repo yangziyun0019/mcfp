@@ -1,0 +1,13 @@
+logging:
+  log_dir: "logs"
+
+data:
+  manifest_path: "D:/code/mcfp/data/manifests/stage1_manifest.jsonl"
+
+split:
+  seed: 42
+  test_ratio: 0.1
+  val_ratio: 0.1
+
+output:
+  split_dir: "D:/code/mcfp/data/splits"

@@ -1,0 +1,22 @@
+logging:
+  log_dir: "logs"
+
+data:
+  repo_root: "D:/code/mcfp"
+  manifest_path: "D:/code/mcfp/data/manifests/stage1_manifest.jsonl"
+  train_split_path: "D:/code/mcfp/data/splits/stage1_train.txt"
+  label_keys:
+    - g_ws
+    - g_red
+    - g_margin
+    - g_self
+    - g_selfpass
+    - g_lim
+    - g_rot
+    - g_man
+    - g_iso
+    - g_sigma
+  percentiles: [1, 5, 50, 95, 99]
+
+output:
+  stats_path: "D:/code/mcfp/data/stats/stage1_train_stats.json"

@@ -1,0 +1,21 @@
+logging:
+  log_dir: "logs"
+
+data:
+  repo_root: "D:/code/mcfp"
+  manifest_path: "D:/code/mcfp/data/manifests/stage1_manifest.jsonl"
+  required_cap_keys:
+    - cell_centers
+    - g_ws
+    - g_red
+    - g_margin
+    - g_self
+    - g_selfpass
+    - g_lim
+    - g_rot
+    - g_man
+    - g_iso
+    - g_sigma
+
+output:
+  report_path: "D:/code/mcfp/data/reports/audit_stage1.json"
