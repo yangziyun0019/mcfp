@@ -1,0 +1,322 @@
+{
+  "meta": {
+    "robot_name": "franka",
+    "family": "franka",
+    "variant_id": "franka_v0014",
+    "parent_variant_id": "franka_v0014",
+    "source": "real",
+    "urdf_path": "D:\\code\\mcfp\\data\\urdf\\franka_emika_panda\\urdf\\panda_arm.urdf",
+    "dof": 7,
+    "base_link": "panda_link0",
+    "ee_link": "panda_link7"
+  },
+  "chain": {
+    "links": [
+      {
+        "index": 0,
+        "name": "panda_link0",
+        "length_estimate": 0.0,
+        "radius_estimate": 0.019
+      },
+      {
+        "index": 1,
+        "name": "panda_link1",
+        "length_estimate": 0.2842875764371966,
+        "radius_estimate": 0.016220612469389595
+      },
+      {
+        "index": 2,
+        "name": "panda_link2",
+        "length_estimate": 0.0,
+        "radius_estimate": 0.016013473430591573
+      },
+      {
+        "index": 3,
+        "name": "panda_link3",
+        "length_estimate": 0.3435061804543441,
+        "radius_estimate": 0.020653852622254866
+      },
+      {
+        "index": 4,
+        "name": "panda_link4",
+        "length_estimate": 0.08692985264320763,
+        "radius_estimate": 0.020020208487526604
+      },
+      {
+        "index": 5,
+        "name": "panda_link5",
+        "length_estimate": 0.44713693343339805,
+        "radius_estimate": 0.021630388221040898
+      },
+      {
+        "index": 6,
+        "name": "panda_link6",
+        "length_estimate": 0.0,
+        "radius_estimate": 0.018419175871484318
+      },
+      {
+        "index": 7,
+        "name": "panda_link7",
+        "length_estimate": 0.09282639088100855,
+        "radius_estimate": 0.020042061667490483
+      }
+    ],
+    "joints": [
+      {
+        "name": "panda_joint1",
+        "type": "revolute",
+        "parent_link": "panda_link0",
+        "child_link": "panda_link1",
+        "origin_xyz": [
+          0.0,
+          0.0,
+          0.2842875764371966
+        ],
+        "origin_rpy": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": -2.8973,
+        "limit_upper": -0.472394783407754,
+        "is_actuated": true
+      },
+      {
+        "name": "panda_joint2",
+        "type": "revolute",
+        "parent_link": "panda_link1",
+        "child_link": "panda_link2",
+        "origin_xyz": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          -1.57079632679,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": -1.5822464240909582,
+        "limit_upper": 1.3132916832304444,
+        "is_actuated": true
+      },
+      {
+        "name": "panda_joint3",
+        "type": "revolute",
+        "parent_link": "panda_link2",
+        "child_link": "panda_link3",
+        "origin_xyz": [
+          0.0,
+          -0.3435061804543441,
+          0.0
+        ],
+        "origin_rpy": [
+          1.57079632679,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": -0.41064748224826264,
+        "limit_upper": 2.8973,
+        "is_actuated": true
+      },
+      {
+        "name": "panda_joint4",
+        "type": "revolute",
+        "parent_link": "panda_link3",
+        "child_link": "panda_link4",
+        "origin_xyz": [
+          0.08692985264320763,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          1.57079632679,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": -3.0718,
+        "limit_upper": -1.8120123918491073,
+        "is_actuated": true
+      },
+      {
+        "name": "panda_joint5",
+        "type": "revolute",
+        "parent_link": "panda_link4",
+        "child_link": "panda_link5",
+        "origin_xyz": [
+          -0.09392142253873023,
+          0.43716153036208977,
+          0.0
+        ],
+        "origin_rpy": [
+          -1.57079632679,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": -1.6641771508753762,
+        "limit_upper": 2.0265159295279056,
+        "is_actuated": true
+      },
+      {
+        "name": "panda_joint6",
+        "type": "revolute",
+        "parent_link": "panda_link5",
+        "child_link": "panda_link6",
+        "origin_xyz": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          1.57079632679,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": 1.8224035341358809,
+        "limit_upper": 3.7525,
+        "is_actuated": true
+      },
+      {
+        "name": "panda_joint7",
+        "type": "revolute",
+        "parent_link": "panda_link6",
+        "child_link": "panda_link7",
+        "origin_xyz": [
+          0.09282639088100855,
+          0.0,
+          0.0
+        ],
+        "origin_rpy": [
+          1.57079632679,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "limit_lower": -1.997630531399342,
+        "limit_upper": 2.086299854081488,
+        "is_actuated": true
+      }
+    ]
+  },
+  "graph": {
+    "num_nodes": 8,
+    "edges": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        5,
+        6
+      ],
+      [
+        6,
+        7
+      ]
+    ]
+  },
+  "morphology": {
+    "variant_id": "franka_v0014",
+    "parent_variant_id": "franka_v0014",
+    "actuated_joint_names": [
+      "panda_joint1",
+      "panda_joint2",
+      "panda_joint3",
+      "panda_joint4",
+      "panda_joint5",
+      "panda_joint6",
+      "panda_joint7"
+    ],
+    "length_scale": [
+      0.8537164457573472,
+      0.8428143910837671,
+      1.0870448748555193,
+      1.0536951835540318,
+      1.138441485317942,
+      0.9694303090254905,
+      1.0548453509205518
+    ],
+    "joint_limit_scale": [
+      0.6461714681676408,
+      0.8212894563539264,
+      0.6814389249309811,
+      0.7055935606521637,
+      0.6369193870850933,
+      0.7106720895889007,
+      0.7047821049737393
+    ],
+    "joint_limit_shift": [
+      -2.34454737812986,
+      -0.13447737043025682,
+      1.563685514954269,
+      -1.300308326388005,
+      0.18116938932626475,
+      1.2945204230109588,
+      0.044334661341072945
+    ],
+    "r_vector": null,
+    "notes": {
+      "generated_from": "perturbation",
+      "materialize_chain": true,
+      "length_scale_range": [
+        0.8,
+        1.2
+      ],
+      "joint_limit_scale_range": [
+        0.6,
+        1.0
+      ],
+      "joint_limit_shift_fraction": 0.2
+    }
+  }
+}

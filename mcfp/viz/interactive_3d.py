@@ -207,6 +207,70 @@ class InteractiveCapabilityViz:
         final_vol["Safety"] = apply_gaussian("Safety", 1.5)
         final_vol["Dexterity"] = apply_gaussian("Dexterity", 1.5)
         return final_vol
+    
+    def _read_mesh_any(self, file_path: Path) -> pv.PolyData:
+        """
+        Robust mesh loader:
+        1) Try pv.read() first (works for STL/OBJ/PLY and sometimes DAE depending on VTK build).
+        2) If pv.read fails and suffix is .dae, fallback to trimesh (+pycollada) and convert to pv.PolyData.
+        """
+        file_path = Path(file_path)
+
+        e_vtk = None  # <-- IMPORTANT: always define
+
+        # --- First try: VTK/PyVista native ---
+        try:
+            mesh = pv.read(str(file_path))
+
+            # Ensure PolyData (some readers may return MultiBlock)
+            if isinstance(mesh, pv.MultiBlock):
+                combined = pv.PolyData()
+                for b in mesh:
+                    if b is None:
+                        continue
+                    b = b.extract_surface() if hasattr(b, "extract_surface") else b
+                    combined = combined.merge(b)
+                mesh = combined
+            elif not isinstance(mesh, pv.PolyData):
+                mesh = mesh.extract_surface() if hasattr(mesh, "extract_surface") else pv.wrap(mesh)
+
+            return mesh
+
+        except Exception as ex:
+            e_vtk = ex
+            # Fallback only for DAE
+            if file_path.suffix.lower() != ".dae":
+                raise
+
+        # --- Second try: trimesh fallback for DAE ---
+        try:
+            import trimesh
+
+            tm = trimesh.load(str(file_path), force="mesh")
+
+            if isinstance(tm, trimesh.Scene):
+                geoms = [g for g in tm.geometry.values() if isinstance(g, trimesh.Trimesh)]
+                if not geoms:
+                    raise ValueError("DAE loaded as Scene but contains no Trimesh geometries.")
+                tm = trimesh.util.concatenate(geoms)
+
+            if not isinstance(tm, trimesh.Trimesh):
+                raise ValueError(f"Unsupported trimesh type: {type(tm)}")
+
+            verts = np.asarray(tm.vertices, dtype=np.float32)
+            faces = np.asarray(tm.faces, dtype=np.int64)
+
+            # pyvista faces format: [3, i0, i1, i2, 3, ...]
+            faces_pv = np.hstack([np.full((faces.shape[0], 1), 3, dtype=np.int64), faces]).ravel()
+            return pv.PolyData(verts, faces_pv)
+
+        except Exception as e_tri:
+            raise RuntimeError(
+                f"Failed to read mesh '{file_path}'. "
+                f"VTK/PyVista error: {e_vtk}. "
+                f"Trimesh fallback error: {e_tri}"
+            ) from e_tri
+
 
     def _bind_meshes_to_links(self) -> Dict[str, pv.PolyData]:
         """
@@ -220,7 +284,7 @@ class InteractiveCapabilityViz:
 
         for link_name, (file_path, scale_arr, T_visual) in link_data_map.items():
             try:
-                mesh = pv.read(file_path)
+                mesh = self._read_mesh_any(file_path)
                 
                 # 1. Apply Scale
                 if np.any(np.abs(scale_arr - 1.0) > 1e-6):

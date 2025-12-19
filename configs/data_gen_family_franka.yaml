@@ -1,0 +1,85 @@
+# configs/data_gen_family_franka.yaml
+
+logging:
+  log_dir: "logs/sim_single"
+
+data:
+  # URDF path
+  urdf_root: "/home/user/mcfp/data/urdf/franka_emika_panda/urdf"
+  # urdf_root: "D:/code/mcfp/data/urdf/franka_emika_panda/urdf"
+
+  # Morphology JSON path (Family directory)
+  json_root: "/home/user/mcfp/data/morph_specs/franka"
+  # json_root: "D:/code/mcfp/data/morph_specs/franka"
+
+  # Capability root (output will be written under: capability_root/morph_specs/<family_name>/...)
+  capability_root: "data/capability"
+
+sim:
+  base_link: "panda_link0"
+  end_effector_link: "panda_link7"
+
+  # Self-collision parameters
+  self_collision:
+    safe_clearance: 0.04   # [m], surface distance for g_self = 1.0
+
+  # Indicator scaling parameters
+  indicators:
+    k_man: 1.0             # scale for manipulability
+    k_sigma: 0.10          # scale for singularity distance
+
+robot:
+  name: "panda"
+
+  # Keep consistent with single run; batch operates in JSON spec mode
+  urdf_filename: "panda_arm.urdf"
+  source_type: "json"
+  spec_filename: "franka_base.json"   # kept for compatibility; batch does not rely on this field
+
+grid:
+  # Workspace bounding box mode: "auto" (scouting) or "manual"
+  mode: "auto"
+
+  # Voxel resolution [m]
+  resolution: 0.04
+
+  # Phase 1: Scouting parameters
+  bounds_samples: 50000     # fast FK samples to find AABB
+  bounds_margin: 1.1        # expand AABB by 10%
+
+  # Phase 2: Surveying (Sampling) parameters
+  sampling:
+    max_total_samples: 3000000     # Hard cap budget
+    target_coverage: 0.3           # Minimum % of valid cells before considering stop
+
+    # Event-based Convergence Criteria
+    improvement_threshold: 0.01    # 1% improvement in g_man counts as a "Significant Event"
+    stability_window: 10000        # Sliding window size to measure update rate
+    min_update_rate: 0.02         # Stop if update rate below threshold
+
+    progress_interval: 50000       # Log frequency
+
+  # Heuristic weights for selecting the representative q* (visualization only)
+  utility:
+    w_man: 1.0
+    w_self: 1.0
+
+batch:
+  # This is the family name used for output folder organization
+  family_name: "franka"
+
+  # Which spec files to include under data.json_root
+  include_glob: "franka_*.json"
+
+  # Optional exclusion list (exact filenames)
+  exclude_filenames: []
+
+  # Output layout: capability_root/morph_specs/<family_name>/<spec_stem>/capability_map.npz
+  output_subdir: "morph_specs"
+
+  # Batch runtime behavior
+  skip_existing: true
+  fail_fast: false
+
+  # Manifest writing (recommended for training indexing / debugging)
+  write_manifest: true

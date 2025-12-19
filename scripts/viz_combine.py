@@ -30,7 +30,8 @@ def main():
     # Adjust this path to your current active config file
     # config_rel_path = "configs/data_gen_single_rm65b.yaml" 
     # config_rel_path = "configs/data_gen_single_wx200.yaml" 
-    config_rel_path = "configs/data_gen_single_openmanipulator.yaml" 
+    # config_rel_path = "configs/data_gen_single_openmanipulator.yaml" 
+    config_rel_path = "configs/data_gen_single_franka.yaml"
 
     config_path = PROJECT_ROOT / config_rel_path
     

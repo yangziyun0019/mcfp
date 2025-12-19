@@ -1,0 +1,9 @@
+{
+  "family": "franka",
+  "total_specs": 51,
+  "ok": 50,
+  "skipped": 1,
+  "failed": 0,
+  "elapsed_sec": 55860.12989115715,
+  "manifest": "data/capability/morph_specs/franka/manifest.jsonl"
+}

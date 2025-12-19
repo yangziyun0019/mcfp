@@ -22,7 +22,7 @@ def _parse_args() -> argparse.Namespace:
         "--config",
         type=str,
         # default="configs/data_gen_family_rm65b.yaml",
-        default="configs/data_gen_family_openmanipulator.yaml",
+        default="configs/data_gen_family_franka.yaml",
         help="Path to YAML config file.",
     )
     return parser.parse_args()

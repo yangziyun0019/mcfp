@@ -1,0 +1,69 @@
+# configs/data_gen_single_franka.yaml
+
+logging:
+  log_dir: "logs/sim_single"
+
+data:
+  # URDF path
+  # urdf_root: "/home/user/mcfp/data/urdf/franka_emika_panda/urdf"
+  urdf_root: "D:/code/mcfp/data/urdf/franka_emika_panda/urdf"
+  # Morphology JSON path (Ensure this directory exists)
+  # json_root: "/home/user/mcfp/data/morph_specs/franka"
+  json_root: "D:/code/mcfp/data/morph_specs/franka"
+  # capability_root: "data/capability/morph_specs/franka/franka_base"
+  capability_root: "data/capability/morph_specs/franka/franka_base"
+
+sim:
+  base_link: "panda_link0"
+  end_effector_link: "panda_link7"
+
+  # Self-collision parameters
+  # safe_clearance now acts as the normalization denominator (d_max) for g_self
+  # and implies the "safety airbag" thickness.
+  self_collision:
+    safe_clearance: 0.05   # [m], surface distance for g_self = 1.0
+
+  # Indicator scaling parameters
+  indicators:
+    k_man: 1.0             # scale for manipulability
+    k_sigma: 0.10          # scale for singularity distance
+
+robot:
+  name: "panda"
+
+  # [Option 1] Use URDF
+  # source_type: "urdf"
+  urdf_filename: "panda_arm.urdf"
+
+  # [Option 2] Use JSON Spec (Uncomment this to switch mode)
+  source_type: "json"
+  spec_filename: "franka_base.json"
+
+grid:
+  # Workspace bounding box mode: "auto" (scouting) or "manual"
+  mode: "auto"
+
+  # Voxel resolution [m]
+  resolution: 0.03
+
+  # Phase 1: Scouting parameters
+  bounds_samples: 50000     # fast FK samples to find AABB
+  bounds_margin: 1.1        # expand AABB by 10%
+
+  # Phase 2: Surveying (Sampling) parameters
+  sampling:
+    max_total_samples: 2000000     # Hard cap budget
+    target_coverage: 0.4          # Minimum % of valid cells before considering stop
+    
+    # Event-based Convergence Criteria
+    improvement_threshold: 0.01    # 1% improvement in g_man counts as a "Significant Event"
+    stability_window: 10000        # Sliding window size to measure update rate
+    min_update_rate: 0.015        # Stop if < 0.1% of samples in window are significant
+    
+    progress_interval: 10000       # Log frequency
+
+  # Heuristic weights for selecting the representative q* (visualization only)
+  # Not used for aggregation logic.
+  utility:
+    w_man: 1.0
+    w_self: 1.0

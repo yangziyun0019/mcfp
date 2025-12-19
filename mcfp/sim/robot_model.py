@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional ,Union, Any
 from scipy.spatial.transform import Rotation as R
+from pathlib import Path
 
 import numpy as np
 
@@ -54,6 +55,7 @@ class RobotModel:
         self.end_effector_link: Optional[str] = end_effector_link
         
         self.urdf_path = Path(urdf_path).resolve() if urdf_path else None
+        # self.package_root = self.urdf_path.parent.parent
         self._spec = spec
 
         # =========================================================
@@ -465,16 +467,137 @@ class RobotModel:
 
     def get_link_visual_data(self, mesh_dir: Path = None) -> Dict[str, Tuple[Path, np.ndarray, np.ndarray]]:
         """
-        Parse URDF to extract mesh paths, scaling factors, AND visual origin transforms.
-        
+        Parse URDF to extract mesh paths, scaling factors, AND origin transforms.
+
+        Policy:
+        1) Prefer <visual> mesh for visualization
+        2) Fallback to <collision> mesh if visual mesh missing
+        3) If neither exists, skip the link
+
         Returns:
             Dict[link_name, (mesh_path, scale_array, origin_matrix)]
         """
-        mapping = {}
-        # Determine package root assuming standard ROS layout
+        mapping: Dict[str, Tuple[Path, np.ndarray, np.ndarray]] = {}
+
         urdf_dir = self.urdf_path.parent
-        package_root = urdf_dir.parent 
-        
+        # Keep your original assumption, but we’ll add robust fallbacks.
+        package_root = urdf_dir.parent
+
+        def _parse_origin(elem: ET.Element) -> np.ndarray:
+            T = np.eye(4)
+            origin = elem.find("origin")
+            if origin is None:
+                return T
+            xyz_str = origin.attrib.get("xyz", "0 0 0")
+            rpy_str = origin.attrib.get("rpy", "0 0 0")
+            try:
+                xyz = np.fromstring(xyz_str, sep=" ")
+                rpy = np.fromstring(rpy_str, sep=" ")
+                if xyz.shape == (3,):
+                    T[:3, 3] = xyz
+                if rpy.shape == (3,):
+                    T[:3, :3] = R.from_euler("xyz", rpy).as_matrix()
+            except Exception:
+                pass
+            return T
+
+        def _parse_scale(mesh_elem: ET.Element) -> np.ndarray:
+            scale_str = mesh_elem.attrib.get("scale", "1.0 1.0 1.0")
+            try:
+                s = np.fromstring(scale_str, sep=" ")
+                if s.shape != (3,):
+                    return np.array([1.0, 1.0, 1.0])
+                return s
+            except Exception:
+                return np.array([1.0, 1.0, 1.0])
+
+        def _resolve_mesh_path(raw_path: str) -> Optional[Path]:
+            if not raw_path:
+                return None
+
+            # 1) package://pkg_name/rel_path
+            if raw_path.startswith("package://"):
+                path_no_prefix = raw_path[len("package://"):]
+                parts = path_no_prefix.split("/", 1)
+                if len(parts) == 2:
+                    pkg_name, rel_path = parts[0], parts[1]
+
+                    # Candidate A (your original behavior): package_root/<rel_path>
+                    cand_a = package_root / rel_path
+
+                    # Candidate B: package_root/<pkg_name>/<rel_path>
+                    # (covers layouts where URDF isn't directly under pkg root)
+                    cand_b = package_root / pkg_name / rel_path
+
+                    # Candidate C: relative to URDF directory (sometimes URDF uses package:// but paths are local)
+                    cand_c = urdf_dir / rel_path
+
+                    for cand in (cand_a, cand_b, cand_c):
+                        if cand.exists():
+                            return cand.resolve()
+
+                    # Final fallback: mesh_dir by basename
+                    if mesh_dir:
+                        cand_d = Path(mesh_dir) / Path(rel_path).name
+                        if cand_d.exists():
+                            return cand_d.resolve()
+
+                return None
+
+            # 2) Relative path in URDF
+            p = Path(raw_path)
+            if not p.is_absolute():
+                # Candidate A (original): relative to URDF directory
+                cand = (urdf_dir / p)
+                if cand.exists():
+                    return cand.resolve()
+
+                # Candidate B (NEW): relative to package root (common ROS layout)
+                # e.g., <pkg_root>/urdf/*.urdf and <pkg_root>/meshes/...
+                cand_pkg = (package_root / p)
+                if cand_pkg.exists():
+                    return cand_pkg.resolve()
+
+                # Candidate C (NEW): one level up from URDF directory
+                # covers layouts where package_root is urdf_dir.parent
+                cand_parent = (urdf_dir.parent / p)
+                if cand_parent.exists():
+                    return cand_parent.resolve()
+
+                # Final fallback (original): mesh_dir by basename
+                if mesh_dir:
+                    cand2 = Path(mesh_dir) / p.name
+                    if cand2.exists():
+                        return cand2.resolve()
+                return None
+
+            # 3) Absolute path
+            if p.exists():
+                return p.resolve()
+            return None
+            
+
+        def _extract_mesh_from_node(node: ET.Element) -> Optional[Tuple[Path, np.ndarray, np.ndarray]]:
+            """
+            node: <visual> or <collision>
+            returns (path, scale, T_origin) or None
+            """
+            geo = node.find("geometry")
+            if geo is None:
+                return None
+            mesh = geo.find("mesh")
+            if mesh is None:
+                return None
+            raw_path = mesh.attrib.get("filename")
+            if not raw_path:
+                return None
+            final_path = _resolve_mesh_path(raw_path)
+            if final_path is None:
+                return None
+            scale_arr = _parse_scale(mesh)
+            T = _parse_origin(node)
+            return (final_path, scale_arr, T)
+
         try:
             tree = ET.parse(self.urdf_path)
             root = tree.getroot()
@@ -484,76 +607,26 @@ class RobotModel:
 
         for link in root.findall(".//link"):
             name = link.attrib.get("name")
-            if not name: continue
+            if not name:
+                continue
 
-            visual = link.find("visual")
-            if visual is not None:
-                # === 1. Parse Origin (XYZ + RPY) ===
-                origin = visual.find("origin")
-                T_visual = np.eye(4)
-                if origin is not None:
-                    xyz_str = origin.attrib.get("xyz", "0 0 0")
-                    rpy_str = origin.attrib.get("rpy", "0 0 0")
-                    try:
-                        xyz = np.fromstring(xyz_str, sep=' ')
-                        rpy = np.fromstring(rpy_str, sep=' ')
-                        
-                        # Build Transform Matrix
-                        T_visual[:3, 3] = xyz
-                        # URDF uses extrinsic xyz Euler angles
-                        rot = R.from_euler('xyz', rpy).as_matrix()
-                        T_visual[:3, :3] = rot
-                    except Exception:
-                        pass # Keep identity on error
+            # Policy: visual first, collision fallback
+            picked = None
+            visual_node = link.find("visual")
+            if visual_node is not None:
+                picked = _extract_mesh_from_node(visual_node)
 
-                # === 2. Parse Geometry & Path ===
-                geo = visual.find("geometry")
-                if geo is not None:
-                    mesh = geo.find("mesh")
-                    if mesh is not None and "filename" in mesh.attrib:
-                        raw_path = mesh.attrib["filename"]
-                        final_path = None
+            if picked is None:
+                coll_node = link.find("collision")
+                if coll_node is not None:
+                    picked = _extract_mesh_from_node(coll_node)
 
-                        if raw_path.startswith("package://"):
-                            path_no_prefix = raw_path.replace("package://", "")
-                            parts = path_no_prefix.split("/", 1)
-                            if len(parts) == 2:
-                                rel_path = parts[1]
-                                candidate = package_root / rel_path
-                                if candidate.exists():
-                                    final_path = candidate
-                                else:
-                                    # Fallback to mesh_dir if provided
-                                    if mesh_dir:
-                                        candidate_fallback = Path(mesh_dir) / Path(rel_path).name
-                                        if candidate_fallback.exists():
-                                            final_path = candidate_fallback
-                        
-                        elif not Path(raw_path).is_absolute():
-                            candidate = urdf_dir / raw_path
-                            if candidate.exists():
-                                final_path = candidate
-                        
-                        else:
-                            candidate = Path(raw_path)
-                            if candidate.exists():
-                                final_path = candidate
+            if picked is None:
+                # Don’t spam warnings: only warn if link declares a mesh but we can’t resolve it
+                # (optional) keep it simple for now:
+                continue
 
-                        if final_path:
-                            # === 3. Parse Scale ===
-                            scale_str = mesh.attrib.get("scale", "1.0 1.0 1.0")
-                            try:
-                                scale_arr = np.fromstring(scale_str, sep=' ')
-                                if scale_arr.shape != (3,): scale_arr = np.array([1.0, 1.0, 1.0])
-                            except ValueError:
-                                scale_arr = np.array([1.0, 1.0, 1.0])
+            mapping[name] = picked
 
-                            # === Return 3 items: Path, Scale, Transform ===
-                            mapping[name] = (final_path, scale_arr, T_visual)
-                        else:
-                            self.logger.warning(
-                                f"[RobotModel] Could not resolve mesh for link '{name}': {raw_path}"
-                            )
-
-        self.logger.info(f"[RobotModel] Parsed {len(mapping)} visual assets with transforms from URDF.")
+        self.logger.info(f"[RobotModel] Parsed {len(mapping)} mesh assets (prefer visual, fallback collision).")
         return mapping
