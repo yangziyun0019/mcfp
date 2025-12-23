@@ -13,10 +13,16 @@ from mcfp.data.io import GridMeta, infer_grid_meta_from_centers, load_capability
 
 @dataclass(frozen=True)
 class PoseFeatureConfig:
-    """Configuration for task-space point feature construction."""
+    """Configuration for task-space point feature construction.
+
+    Contract v1 default expects 9D:
+        aabb_ratio(3) + aabb_centered(3) + p_over_Lr(3)
+    """
+    use_aabb_ratio: bool = False
     use_aabb_centered: bool = True
     use_morph_scale: bool = True
     grid_round_decimals: int = 6
+
 
 
 class Stage1Dataset(Dataset):
@@ -46,6 +52,17 @@ class Stage1Dataset(Dataset):
         self.pose_cfg = pose_cfg
         self.cache_maps = bool(cache_maps)
         self.cache_specs = bool(cache_specs)
+
+        if len(self.label_keys) == 0:
+            raise ValueError("[Stage1Dataset] label_keys is empty. This violates the Stage-1 contract.")
+
+        self.ws_name = "g_ws"
+        if self.ws_name not in self.label_keys:
+            raise ValueError(
+                f"[Stage1Dataset] ws_name='{self.ws_name}' must be included in label_keys. "
+                f"Got label_keys={self.label_keys}"
+            )
+        self.ws_idx = int(self.label_keys.index(self.ws_name))
 
         # Cache: variant_id -> arrays/spec/grid_meta/morph_scale
         self._cap_cache: Dict[str, Dict[str, np.ndarray]] = {}
@@ -121,26 +138,47 @@ class Stage1Dataset(Dataset):
         return Lr
 
     def _build_point_features(self, p: np.ndarray, grid: GridMeta, Lr: float) -> np.ndarray:
+        """Construct pose features in a fixed order.
+
+        Contract v1 default (F=9):
+            [aabb_ratio(3), aabb_centered(3), p_over_Lr(3)]
+        """
         feats: List[np.ndarray] = []
 
-        if self.pose_cfg.use_aabb_centered:
+        # AABB-derived features (ratio / centered)
+        if self.pose_cfg.use_aabb_ratio or self.pose_cfg.use_aabb_centered:
             bmin = grid.bounds_min.astype(np.float32)
             bmax = grid.bounds_max.astype(np.float32)
             denom = np.maximum(bmax - bmin, 1e-8).astype(np.float32)
-            phat = (p.astype(np.float32) - bmin) / denom
-            # Center to [-1, 1]
-            phat_c = (2.0 * phat - 1.0).astype(np.float32)
-            feats.append(phat_c)
+            phat = ((p.astype(np.float32) - bmin) / denom).astype(np.float32)  # [0,1]
 
+            # IMPORTANT: fixed concat order
+            if self.pose_cfg.use_aabb_ratio:
+                feats.append(phat)
+            if self.pose_cfg.use_aabb_centered:
+                feats.append((2.0 * phat - 1.0).astype(np.float32))  # [-1,1]
+
+        # Morph-scale normalized feature
         if self.pose_cfg.use_morph_scale:
             Lr = float(Lr)
-            ps = (p.astype(np.float32) / max(Lr, 1e-8)).astype(np.float32)
-            feats.append(ps)
+            feats.append((p.astype(np.float32) / max(Lr, 1e-8)).astype(np.float32))
 
         if len(feats) == 0:
             feats.append(p.astype(np.float32))
+                                                                                                                                                                                
+        out = np.concatenate(feats, axis=0).astype(np.float32)
 
-        return np.concatenate(feats, axis=0).astype(np.float32)
+        # Contract assertions (shape)
+        expected = 0
+        expected += 3 if self.pose_cfg.use_aabb_ratio else 0
+        expected += 3 if self.pose_cfg.use_aabb_centered else 0
+        expected += 3 if self.pose_cfg.use_morph_scale else 0
+        expected = expected if expected > 0 else 3
+        if out.shape != (expected,):
+            raise ValueError(f"[Stage1Dataset] pose_feats shape mismatch: got {out.shape}, expected {(expected,)}")
+
+        return out
+
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         vid, cell_idx = self._index[idx]
@@ -155,7 +193,7 @@ class Stage1Dataset(Dataset):
         grid = self._get_grid_meta(vid, centers)
         Lr = self._get_scale(vid, spec)
 
-        point_feats = self._build_point_features(p, grid, Lr)  # (F,)
+        pose_feats = self._build_point_features(p, grid, Lr)  # (F,)
 
         # Labels
         labels = []
@@ -164,20 +202,69 @@ class Stage1Dataset(Dataset):
             labels.append(arr[cell_idx])
         y = np.asarray(labels, dtype=np.float32)
 
-        gws = float(np.asarray(cap["g_ws"], dtype=np.float32).reshape(-1)[cell_idx])
-        ws_mask = 1.0 if gws > 0.5 else 0.0
+
+        # Contract assertion: labels shape
+        if y.shape != (len(self.label_keys),):
+            raise ValueError(f"[Stage1Dataset] labels shape mismatch: got {y.shape}, expected {(len(self.label_keys),)}")
+
+        # Contract v1: ws_mask is derived strictly from labels[g_ws].
+        ws_val = float(y[self.ws_idx])
+        ws_mask = bool(ws_val > 0.5)
+
+        # Optional audit: check cap['g_ws'] consistency if it exists.
+        if "g_ws" in cap:
+            gws_cap = float(np.asarray(cap["g_ws"], dtype=np.float32).reshape(-1)[cell_idx])
+            if abs(gws_cap - ws_val) > 1e-5:
+                raise ValueError(
+                    f"[Stage1Dataset] Inconsistent g_ws between labels and cap['g_ws']: "
+                    f"labels={ws_val} cap={gws_cap} (variant_id={vid}, cell_idx={cell_idx})"
+                )
 
         sample = {
             "variant_id": vid,
             "family": rec["family"],
             "dof": int(rec["dof"]),
             "cell_idx": int(cell_idx),
-            "point_feats": torch.from_numpy(point_feats),  # (F,)
-            "labels": torch.from_numpy(y),                 # (K,)
-            "ws_mask": torch.tensor(ws_mask, dtype=torch.float32),
+            "pose_feats": torch.from_numpy(pose_feats),          # (F,)
+            "labels": torch.from_numpy(y),                       # (K,)
+            "ws_mask": torch.tensor(ws_mask, dtype=torch.bool),  # ()
         }
-
-        # Morphology graph encoding is model-side; here we only return spec
-        # as a structured dict for downstream graph builder.
         sample["morph_spec"] = spec
         return sample
+    
+    @staticmethod
+    def collate_stage1_grouped(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Collate function for grouped-by-variant Stage I batches.
+
+        Requirements
+        ------------
+        - All samples in `batch` must share the same variant_id (grouped sampling).
+        - Keep only one morph_spec to avoid redundant graph building / caching.
+        """
+        if len(batch) == 0:
+            raise ValueError("Empty batch is not allowed.")
+
+        vid0 = batch[0]["variant_id"]
+        for s in batch:
+            if s["variant_id"] != vid0:
+                raise ValueError(
+                    f"Grouped collate expects a single variant_id per batch, "
+                    f"but got {vid0} and {s['variant_id']}."
+                )
+
+        point_feats = torch.stack([s["point_feats"] for s in batch], dim=0)  # (B, F)
+        labels = torch.stack([s["labels"] for s in batch], dim=0)            # (B, K)
+        ws_mask = torch.stack([s["ws_mask"] for s in batch], dim=0).view(-1) # (B,)
+
+        out: Dict[str, Any] = {
+            "variant_id": vid0,
+            "family": batch[0].get("family", None),
+            "dof": batch[0].get("dof", None),
+            "cell_idx": torch.tensor([s["cell_idx"] for s in batch], dtype=torch.long),
+            "point_feats": point_feats,
+            "labels": labels,
+            "ws_mask": ws_mask,
+            # Keep a single spec for the entire batch.
+            "morph_spec": batch[0]["morph_spec"],
+        }
+        return out

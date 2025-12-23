@@ -1,0 +1,89 @@
+# configs/train_stage1.yaml
+
+run:
+  seed: 42                # RNG seed for reproducibility.
+  device: cuda            # Compute device: "cuda" or "cpu".
+  run_dir: runs/stage1/exp_aligned_v1  # Output directory for logs/checkpoints.
+
+  max_steps: 50000        # Total number of optimization steps.
+  log_interval: 100        # Steps between training log prints.
+  val_interval: 500       # Steps between validation runs.
+  val_max_batches: 200    # Max validation batches per run.
+  val_ws_ratio: 0.8       # Validation ws/non-ws sampling ratio.
+  val_batch_size: 10       # Validation batch size (samples per update).
+
+  num_workers: 0          # DataLoader worker processes.
+  pin_memory: false       # Pin CPU memory for faster host->device transfer.
+
+  save_interval: 1000     # Steps between checkpoint saves.
+  keep_last_n: 3          # Max number of recent checkpoints to keep.
+
+paths:
+  repo_root: D:/code/mcfp  # Repository root path.
+  manifest: D:/code/mcfp/data/manifests/stage1_manifest.jsonl  # Manifest JSONL.
+  splits_dir: D:/code/mcfp/data/splits  # Train/val/test split files.
+  stats: D:/code/mcfp/data/stats/stage1_train_stats.json  # Dataset stats file.
+
+data:
+  batch_size: 30           # Training batch size.
+  ws_ratio: 0.8           # Training ws/non-ws sampling ratio.
+
+  label_keys: []          # Label keys; empty uses stats["label_keys"].
+
+  pose_features:
+    use_aabb_ratio: true          # Include AABB ratio features.
+    use_aabb_centered: true       # Include AABB centered features.
+    use_morph_scale: true         # Include morphology-scale features.
+    grid_round_decimals: 6        # Grid rounding decimals for meta inference.
+
+model:
+  d_model: 256            # Token embedding dimension.
+
+  morph_graph:
+    bidirectional: true           # Use bidirectional edges.
+    use_link_index_feature: true  # Include link index feature.
+
+  morph_encoder:
+    num_layers: 5          # GNN depth.
+    dropout: 0.1           # GNN dropout rate.
+    use_layernorm: true    # Apply LayerNorm in GNN layers.
+
+  pose_encoder:
+    pose_dim: 9            # Pose feature dimension (overwritten by dataset).
+    emb_dim: 256           # Pose embedding dimension.
+    num_bands: 10          # Fourier feature bands.
+    mlp_hidden: 256        # MLP hidden size.
+    mlp_layers: 3          # MLP depth.
+    dropout: 0.0           # MLP dropout rate.
+    include_xyz_raw: true  # Include raw xyz in Fourier features.
+
+  backbone:
+    d_model: 256           # Backbone token dimension.
+    nhead: 8               # Attention heads.
+    num_layers: 6          # Transformer layers.
+    dim_feedforward: 1024  # FFN dimension.
+    dropout: 0.1           # Transformer dropout.
+    max_nodes: null        # Optional max node tokens per graph.
+
+  heads:
+    heads: []                   # Optional explicit head configs.
+    default_hidden_dim: 256     # Default head hidden size.
+    default_num_layers: 2       # Default head depth.
+    default_dropout: 0.0        # Default head dropout.
+    default_out_activation: sigmoid  # Default head output activation.
+    ws_out_activation: identity # g_ws head activation when using logits.
+
+loss:
+  ws_name: g_ws          # Name of workspace indicator label.
+  ws_with_logits: true   # Treat g_ws as logits for BCEWithLogits.
+  mask_by_ws: true       # Mask regression losses by ws_mask.
+  huber_delta: 0.05      # Huber delta for SmoothL1 loss.
+  ws_pos_weight: null    # Positive class weight for g_ws BCE.
+
+  head_weights: {}       # Per-head loss weights; empty -> 1.0 for all.
+
+optim:
+  lr: 0.0001             # Learning rate.
+  weight_decay: 0.01     # AdamW weight decay.
+  grad_clip_norm: 1.0    # Gradient norm clip.
+  use_amp: true          # Use mixed precision on CUDA.

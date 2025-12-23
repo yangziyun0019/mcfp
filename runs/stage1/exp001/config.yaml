@@ -1,0 +1,63 @@
+# configs/train_stage1.yaml
+
+run:
+  seed: 42
+  device: cuda
+  run_dir: runs/stage1/exp001
+  log_interval: 50
+  val_interval: 500
+  max_steps: 20000
+  num_workers: 4
+  pin_memory: true
+
+paths:
+  repo_root: D:/code/mcfp
+  manifest: D:/code/mcfp/data/manifests/stage1_manifest.jsonl
+  splits_dir: D:/code/mcfp/data/splits
+  stats: D:/code/mcfp/data/stats/stage1_train_stats.json
+
+data:
+  batch_size: 256
+  ws_ratio: 0.8
+  # If stats file does not include label_keys, provide it explicitly here.
+  # IMPORTANT: keep dataset label order consistent across the whole pipeline.
+  label_keys: []   # e.g. ["g_ws","g_self","g_lim","g_man", ...]
+
+  pose_features:
+    # Your current dataset implementation constructs 6D by default (phat_centered + p/Lr).
+    # If you later extend to 9D, set include_aabb_ratio: true and update model.pose_input_dim accordingly.
+    include_aabb_ratio: false        # [0,1]^3
+    include_aabb_centered: true      # [-1,1]^3
+    include_morph_scale: true        # p/Lr (3)
+    grid_round_decimals: 6
+
+model:
+  d_model: 256
+  gnn_layers: 3
+  gnn_dropout: 0.0
+  gnn_layernorm: true
+
+  # Heads: g_ws must output logits if loss.ws_with_logits=true.
+  heads:
+    g_ws:
+      out_activation: identity
+    # regression heads default to sigmoid to keep [0,1]
+    default_regression:
+      out_activation: sigmoid
+
+loss:
+  ws_name: g_ws
+  ws_with_logits: true
+  mask_by_ws: true
+  huber_delta: 0.05
+  # Optional: handle class imbalance for g_ws (workspace is often sparse)
+  ws_pos_weight: null
+
+  # If empty, training script can auto-fill 1.0 for all supervised heads.
+  head_weights: {}
+
+optim:
+  lr: 0.0003
+  weight_decay: 0.01
+  grad_clip_norm: 1.0
+  use_amp: true
