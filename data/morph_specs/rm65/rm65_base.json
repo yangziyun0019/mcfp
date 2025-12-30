@@ -5,7 +5,7 @@
     "variant_id": "rm65_base",
     "parent_variant_id": null,
     "source": "real",
-    "urdf_path": "/home/user/mcfp/data/urdf/rm_65_b_description/urdf/rm_65_b_description.urdf",
+    "urdf_path": "D:\\code\\mcfp\\data\\urdf\\rm_65_b_description\\urdf\\rm_65_b_description.urdf",
     "dof": 6,
     "base_link": "base_link",
     "ee_link": "Link6"
@@ -16,25 +16,25 @@
         "index": 0,
         "name": "base_link",
         "length_estimate": 0.0,
-        "radius_estimate": 0.03
+        "radius_estimate": 0.019
       },
       {
         "index": 1,
         "name": "Link1",
         "length_estimate": 0.2405,
-        "radius_estimate": 0.03
+        "radius_estimate": 0.019
       },
       {
         "index": 2,
         "name": "Link2",
         "length_estimate": 0.0,
-        "radius_estimate": 0.03
+        "radius_estimate": 0.019
       },
       {
         "index": 3,
         "name": "Link3",
         "length_estimate": 0.256,
-        "radius_estimate": 0.021664356673461865
+        "radius_estimate": 0.019
       },
       {
         "index": 4,
@@ -271,5 +271,19 @@
       "generated_from": "urdf",
       "warning": "Base spec uses identity perturbations; variants should materialize chain edits."
     }
+  },
+  "workspace": {
+    "aabb_min": [
+      -0.6677674651145935,
+      -0.66880202293396,
+      -0.3277128338813782
+    ],
+    "aabb_max": [
+      0.66983562707901,
+      0.6615461111068726,
+      0.9058277010917664
+    ],
+    "bounds_samples": 50000,
+    "margin": 1.1
   }
 }

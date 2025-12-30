@@ -2,9 +2,9 @@ import json
 from pathlib import Path
 from torch.utils.data import DataLoader
 
-from mcfp.data.datasets import Stage1Dataset, PoseFeatureConfig
+from mcfp.data.datasets import DeltaFeatureConfig, PoseDeltaDataset, PoseFeatureConfig
 from mcfp.data.io import read_jsonl
-from mcfp.data.collate import GroupedBatchCollator
+from mcfp.data.collate import PoseBatchCollator
 
 
 def read_split_ids(txt_path: Path):
@@ -31,23 +31,28 @@ def main():
     variant_ids = read_split_ids(split_path)
 
     pose_cfg = PoseFeatureConfig(
-        use_aabb_ratio=True,
-        use_aabb_centered=True,
-        use_morph_scale=True,
-        grid_round_decimals=6,
+        primary_pos="aabb_centered",
+        include_aabb_ratio=True,
+        include_aabb_centered=True,
+        include_morph_scale=True,
+        include_raw_pos=False,
+        include_quat=True,
+        quat_normalize=False,
     )
+    delta_cfg = DeltaFeatureConfig(pos_norm="aabb", rot_norm="pi")
 
-    ds = Stage1Dataset(
+    ds = PoseDeltaDataset(
         repo_root=repo_root,
         manifest_records=manifest_records,
         variant_ids=variant_ids,
         label_keys=label_keys,
         pose_cfg=pose_cfg,
-        cache_maps=False,
+        delta_cfg=delta_cfg,
+        cache_pose=False,
         cache_specs=False,
     )
 
-    collator = GroupedBatchCollator(label_keys=label_keys)
+    collator = PoseBatchCollator(label_keys=label_keys)
 
     dl = DataLoader(
         ds,
@@ -63,6 +68,7 @@ def main():
     print("pose_feats:", batch["pose_feats"].shape, batch["pose_feats"].dtype)
     print("labels:", batch["labels"].shape, batch["labels"].dtype)
     print("ws_mask:", batch["ws_mask"].shape, batch["ws_mask"].dtype)
+    print("delta_mask:", batch["delta_mask"].shape, batch["delta_mask"].dtype)
     print("label_keys len:", len(batch["label_keys"]))
 
     g = batch["morph_graph"]
@@ -80,10 +86,8 @@ def main():
 
 
     # Contract assertions
-    assert batch["pose_feats"].shape[1] == 9
     assert batch["labels"].shape[1] == len(label_keys)
-    assert batch["ws_mask"].dtype == batch["ws_mask"].dtype  # bool
-    print("[OK] Batch contract v1 looks correct (without morph_spec).")
+    print("[OK] Batch contract looks correct.")
 
 
 if __name__ == "__main__":

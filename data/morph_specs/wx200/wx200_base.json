@@ -5,7 +5,7 @@
     "variant_id": "wx200_base",
     "parent_variant_id": null,
     "source": "real",
-    "urdf_path": "/home/user/mcfp/data/urdf/interbotix_descriptions/urdf/wx200.urdf",
+    "urdf_path": "D:\\code\\mcfp\\data\\urdf\\interbotix_descriptions\\urdf\\wx200.urdf",
     "dof": 5,
     "base_link": "/base_link",
     "ee_link": "/ee_arm_link"
@@ -267,5 +267,19 @@
       "generated_from": "urdf",
       "warning": "Base spec uses identity perturbations; variants should materialize chain edits."
     }
+  },
+  "workspace": {
+    "aabb_min": [
+      -0.560340404510498,
+      -0.562413215637207,
+      -0.36841636896133423
+    ],
+    "aabb_max": [
+      0.5626252889633179,
+      0.5644994974136353,
+      0.6716168522834778
+    ],
+    "bounds_samples": 50000,
+    "margin": 1.1
   }
 }

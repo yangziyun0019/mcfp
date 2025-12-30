@@ -2,32 +2,31 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from omegaconf import OmegaConf
-
-from mcfp.data.io import build_manifest_records, write_jsonl
+from mcfp.data.io import build_pose_manifest_records, write_jsonl
+from mcfp.utils.config import load_config
 from mcfp.utils.logging import setup_logger
 
 
 def main() -> None:
-    cfg = OmegaConf.load("configs/build_manifest.yaml")
+    cfg = load_config("configs/build_manifest.yaml")
     logger = setup_logger(name="mcfp.scripts.build_manifest", log_dir=cfg.logging.log_dir)
 
     repo_root = Path(cfg.data.repo_root).resolve()
     morph_specs_root = Path(cfg.data.morph_specs_root).resolve()
-    capability_root = Path(cfg.data.capability_root).resolve()
+    pose_samples_root = Path(cfg.data.pose_samples_root).resolve()
+    pose_filename = str(cfg.data.pose_filename)
     manifest_path = Path(cfg.output.manifest_path).resolve()
 
     logger.info(f"[build_manifest] repo_root={repo_root}")
     logger.info(f"[build_manifest] morph_specs_root={morph_specs_root}")
-    logger.info(f"[build_manifest] capability_root={capability_root}")
+    logger.info(f"[build_manifest] pose_samples_root={pose_samples_root}")
     logger.info(f"[build_manifest] manifest_path={manifest_path}")
 
-    records = build_manifest_records(
+    records = build_pose_manifest_records(
         repo_root=repo_root,
         morph_specs_root=morph_specs_root,
-        capability_root=capability_root,
-        required_cap_keys=list(cfg.data.required_cap_keys),
-        grid_round_decimals=int(cfg.data.grid_round_decimals),
+        pose_samples_root=pose_samples_root,
+        pose_filename=pose_filename,
         logger=logger,
     )
 

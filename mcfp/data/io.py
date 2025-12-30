@@ -44,6 +44,13 @@ def load_capability_map(path: Path) -> Dict[str, np.ndarray]:
         return {k: data[k] for k in data.files}
 
 
+def load_pose_samples(path: Path) -> Dict[str, np.ndarray]:
+    """Load pose sample arrays from a NPZ file."""
+    path = Path(path)
+    with np.load(path) as data:
+        return {k: data[k] for k in data.files}
+
+
 def save_workspace_samples(
     output_path: Path,
     positions: np.ndarray,
@@ -79,6 +86,86 @@ def save_workspace_samples(
 
     if logger is not None:
         logger.info(f"[data.io] Saved workspace samples to: {save_path}")
+
+
+def save_pose_dataset(
+    path: Path,
+    poses: np.ndarray,
+    labels: np.ndarray,
+    aabb_min: Optional[np.ndarray] = None,
+    aabb_max: Optional[np.ndarray] = None,
+    meta: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Save IK pose samples (pose + label) to a compressed NPZ file.
+
+    Parameters
+    ----------
+    path:
+        Output file path.
+    poses:
+        Array of shape (N, 7): [x, y, z, qx, qy, qz, qw].
+    labels:
+        Array of shape (N,) with 0/1 reachability labels.
+    aabb_min, aabb_max:
+        Optional workspace bounds used for sampling.
+    meta:
+        Optional metadata dict to be stored as JSON string.
+    """
+    path = Path(path)
+    data: Dict[str, np.ndarray] = {
+        "poses": np.asarray(poses, dtype=np.float32),
+        "labels": np.asarray(labels, dtype=np.float32),
+    }
+    if aabb_min is not None and aabb_max is not None:
+        data["aabb_min"] = np.asarray(aabb_min, dtype=np.float32)
+        data["aabb_max"] = np.asarray(aabb_max, dtype=np.float32)
+    if meta is not None:
+        meta_json = json.dumps(meta, ensure_ascii=True)
+        data["meta_json"] = np.asarray(meta_json)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(path, **data)
+
+
+def save_pose_deltas(
+    path: Path,
+    poses: np.ndarray,
+    labels: np.ndarray,
+    delta_pos: np.ndarray,
+    delta_rot: np.ndarray,
+    delta_dist: np.ndarray,
+    delta_mask: np.ndarray,
+) -> None:
+    """Save pose samples with nearest-positive deltas to NPZ.
+
+    Parameters
+    ----------
+    path:
+        Output file path.
+    poses:
+        Array of shape (N, 7): [x, y, z, qx, qy, qz, qw].
+    labels:
+        Array of shape (N,) with 0/1 reachability labels.
+    delta_pos:
+        Array of shape (N, 3), position delta to nearest positive.
+    delta_rot:
+        Array of shape (N, 3), axis-angle rotation delta to nearest positive.
+    delta_dist:
+        Array of shape (N,), weighted SE(3) distance used for nearest search.
+    delta_mask:
+        Array of shape (N,), 1 for negative samples with valid delta, 0 otherwise.
+    """
+    path = Path(path)
+    data: Dict[str, np.ndarray] = {
+        "poses": np.asarray(poses, dtype=np.float32),
+        "labels": np.asarray(labels, dtype=np.float32),
+        "delta_pos": np.asarray(delta_pos, dtype=np.float32),
+        "delta_rot": np.asarray(delta_rot, dtype=np.float32),
+        "delta_dist": np.asarray(delta_dist, dtype=np.float32),
+        "delta_mask": np.asarray(delta_mask, dtype=np.float32),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(path, **data)
 
 
 # =============================================================================
@@ -431,5 +518,63 @@ def build_manifest_records(
         records.append(rec)
 
     # Deterministic ordering for reproducibility.
+    records.sort(key=lambda r: (r["family"], r["variant_id"]))
+    return records
+
+
+def build_pose_manifest_records(
+    repo_root: Path,
+    morph_specs_root: Path,
+    pose_samples_root: Path,
+    pose_filename: str,
+    logger=None,
+) -> List[Dict[str, Any]]:
+    """Build manifest records for pose samples per morphology.
+
+    Each record links a morphology spec JSON to a pose sample NPZ.
+    """
+    records: List[Dict[str, Any]] = []
+    root = Path(morph_specs_root)
+    for spec_path in iter_spec_files(root):
+        spec = load_morph_spec(spec_path)
+        family, variant_id, dof = get_spec_identity(spec, fallback_stem=spec_path.stem)
+
+        meta = spec.get("meta", {}) if isinstance(spec, dict) else {}
+        robot_name = str(meta.get("robot_name", "")).strip() or variant_id
+
+        pose_path = Path(pose_samples_root) / robot_name / pose_filename
+        if not pose_path.exists():
+            if logger is not None:
+                logger.warning(f"[data.io] Missing pose samples: {pose_path} (spec={spec_path})")
+            continue
+
+        try:
+            with np.load(pose_path) as data:
+                poses = np.asarray(data.get("poses"))
+                labels = np.asarray(data.get("labels"))
+        except Exception as exc:
+            if logger is not None:
+                logger.warning(f"[data.io] Failed to load pose samples: {pose_path} ({exc})")
+            continue
+
+        if poses.ndim != 2 or poses.shape[1] != 7:
+            if logger is not None:
+                logger.warning(f"[data.io] Bad poses shape: {pose_path} {poses.shape}")
+            continue
+        if labels.ndim != 1 or labels.shape[0] != poses.shape[0]:
+            if logger is not None:
+                logger.warning(f"[data.io] Bad labels shape: {pose_path} {labels.shape}")
+            continue
+
+        rec = {
+            "family": family,
+            "variant_id": variant_id,
+            "dof": int(dof),
+            "spec_path": to_posix_relpath(spec_path, repo_root),
+            "pose_path": to_posix_relpath(pose_path, repo_root),
+            "num_samples": int(poses.shape[0]),
+        }
+        records.append(rec)
+
     records.sort(key=lambda r: (r["family"], r["variant_id"]))
     return records

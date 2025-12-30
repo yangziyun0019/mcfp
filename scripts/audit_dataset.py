@@ -8,7 +8,7 @@ import numpy as np
 from omegaconf import OmegaConf
 
 from mcfp.data.io import read_jsonl
-from mcfp.data.io import load_capability_map, load_morph_spec
+from mcfp.data.io import load_morph_spec, load_pose_samples
 from mcfp.utils.logging import setup_logger
 
 
@@ -32,7 +32,7 @@ def main() -> None:
     manifest_path = Path(cfg.data.manifest_path).resolve()
     report_path = Path(cfg.output.report_path).resolve()
 
-    required_cap_keys = list(cfg.data.required_cap_keys)
+    required_keys = list(cfg.data.required_keys)
 
     records = read_jsonl(manifest_path)
     logger.info(f"[audit] Loaded {len(records)} manifest records from {manifest_path}")
@@ -53,13 +53,13 @@ def main() -> None:
         family = rec["family"]
         variant_id = rec["variant_id"]
         spec_path = (repo_root / rec["spec_path"]).resolve()
-        cap_path = (repo_root / rec["cap_path"]).resolve()
+        pose_path = (repo_root / rec["pose_path"]).resolve()
 
         entry: Dict[str, Any] = {
             "family": family,
             "variant_id": variant_id,
             "spec_path": str(spec_path),
-            "cap_path": str(cap_path),
+            "pose_path": str(pose_path),
             "errors": [],
             "warnings": [],
             "valid_ratio": rec.get("valid_ratio", None),
@@ -68,8 +68,8 @@ def main() -> None:
 
         if not spec_path.exists():
             entry["errors"].append("missing spec_path")
-        if not cap_path.exists():
-            entry["errors"].append("missing cap_path")
+        if not pose_path.exists():
+            entry["errors"].append("missing pose_path")
 
         if entry["errors"]:
             total_errors += len(entry["errors"])
@@ -82,46 +82,42 @@ def main() -> None:
         if dof is None:
             entry["warnings"].append("spec.meta.dof missing")
 
-        cap = load_capability_map(cap_path)
-        missing = [k for k in required_cap_keys if k not in cap]
+        data = load_pose_samples(pose_path)
+        missing = [k for k in required_keys if k not in data]
         if missing:
-            entry["errors"].append(f"cap missing keys: {missing}")
+            entry["errors"].append(f"pose samples missing keys: {missing}")
 
-        if "cell_centers" in cap:
-            centers = np.asarray(cap["cell_centers"])
-            if centers.ndim != 2 or centers.shape[1] != 3:
-                entry["errors"].append(f"cell_centers bad shape: {centers.shape}")
-            n = int(centers.shape[0]) if centers.ndim == 2 else -1
-        else:
-            n = -1
+        poses = np.asarray(data.get("poses", np.empty((0, 7))), dtype=np.float32)
+        labels = np.asarray(data.get("labels", np.empty((0,))), dtype=np.float32).reshape(-1)
+        delta_pos = np.asarray(data.get("delta_pos", np.empty((0, 3))), dtype=np.float32)
+        delta_rot = np.asarray(data.get("delta_rot", np.empty((0, 3))), dtype=np.float32)
+        delta_mask = np.asarray(data.get("delta_mask", np.empty((0,))), dtype=np.float32).reshape(-1)
 
-        # g_ws sanity
-        if "g_ws" in cap and n > 0:
-            gws = np.asarray(cap["g_ws"]).astype(np.float32).reshape(-1)
-            entry["errors"].extend(_check_array_1d("g_ws", gws, n))
-            uniq = np.unique(np.round(gws, 6))
-            if not np.all(np.isin(uniq, np.array([0.0, 1.0], dtype=np.float32))):
-                entry["warnings"].append(f"g_ws not binary; unique={uniq.tolist()}")
+        n = int(poses.shape[0]) if poses.ndim == 2 else -1
 
-            valid_ratio = float(np.mean(gws))
-            entry["valid_ratio_recomputed"] = valid_ratio
-        else:
-            entry["warnings"].append("missing g_ws or invalid n")
+        if poses.ndim != 2 or poses.shape[1] != 7:
+            entry["errors"].append(f"poses bad shape: {poses.shape}")
+        if labels.ndim != 1 or labels.shape[0] != n:
+            entry["errors"].append(f"labels bad shape: {labels.shape}")
+        if delta_pos.ndim != 2 or delta_pos.shape[1] != 3 or delta_pos.shape[0] != n:
+            entry["errors"].append(f"delta_pos bad shape: {delta_pos.shape}")
+        if delta_rot.ndim != 2 or delta_rot.shape[1] != 3 or delta_rot.shape[0] != n:
+            entry["errors"].append(f"delta_rot bad shape: {delta_rot.shape}")
+        if delta_mask.ndim != 1 or delta_mask.shape[0] != n:
+            entry["errors"].append(f"delta_mask bad shape: {delta_mask.shape}")
 
-        # Other g_* arrays
         if n > 0:
-            for k in required_cap_keys:
-                if k in ("cell_centers",):
-                    continue
-                if k not in cap:
-                    continue
-                arr = np.asarray(cap[k])
-                if k.startswith("g_") or k in ("sample_counts",):
-                    if k == "sample_counts":
-                        if arr.ndim != 1 or arr.shape[0] != n:
-                            entry["errors"].append(f"sample_counts bad shape: {arr.shape}")
-                    else:
-                        entry["errors"].extend(_check_array_1d(k, arr.astype(np.float32), n))
+            entry["errors"].extend(_check_array_1d("labels", labels, n))
+            entry["errors"].extend(_check_array_1d("delta_mask", delta_mask, n))
+            uniq = np.unique(np.round(labels, 6))
+            if not np.all(np.isin(uniq, np.array([0.0, 1.0], dtype=np.float32))):
+                entry["warnings"].append(f"labels not binary; unique={uniq.tolist()}")
+            uniq_m = np.unique(np.round(delta_mask, 6))
+            if not np.all(np.isin(uniq_m, np.array([0.0, 1.0], dtype=np.float32))):
+                entry["warnings"].append(f"delta_mask not binary; unique={uniq_m.tolist()}")
+
+            valid_ratio = float(np.mean(labels)) if labels.size > 0 else float("nan")
+            entry["valid_ratio_recomputed"] = valid_ratio
 
         if entry["errors"]:
             total_errors += len(entry["errors"])

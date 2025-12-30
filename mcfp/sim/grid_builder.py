@@ -96,10 +96,12 @@ def generate_capability_for_robot(
             end_effector_link=end_effector_link,
         )
 
+    self_cfg = _get_subconfig(grid_cfg, "self_collision")
     self_checker = SelfCollisionChecker.from_robot(
         robot=robot,
-        cache_dir=robot_dir, 
+        cache_dir=robot_dir,
         logger=logger,
+        radius_cfg=self_cfg,
     )
     logger.info(
         f"[grid_builder] Robot ready. Joints: {robot.num_joints}. "
@@ -293,7 +295,6 @@ def _evaluate_grid_hybrid(
     num_cells = len(cell_centers)
     
     # Self collision d_max
-    self_cfg = _get_subconfig(grid_cfg, "self_collision")
     d_max = float(_get_cfg_val_default(self_cfg, "safe_clearance", 0.05))
 
     # Sampling params

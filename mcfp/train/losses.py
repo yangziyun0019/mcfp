@@ -86,22 +86,26 @@ class MultiTaskLoss(nn.Module):
     Conventions
     -----------
     - g_ws is a binary reachability target in {0,1}.
-    - Other heads are continuous in [0,1] and are meaningful only when ws_mask == 1.
+    - Delta heads are continuous regression targets and are masked by delta_mask.
 
     Expected batch keys
     -------------------
     - batch["labels"]: Dict[str, Tensor[B]] OR Tensor[B,K]
     - batch["label_keys"]: List[str] if labels is Tensor
-    - batch["ws_mask"]: Tensor[B] (preferred for masking regression)
+    - batch["delta_mask"]: Tensor[B] (preferred for masking regression)
+    - batch["ws_mask"]: Tensor[B] (optional fallback)
     - batch["sample_weight"]: Tensor[B] (optional)
 
     Args:
         head_weights: Dict[str, float] weighting each head loss.
         ws_name: Name of reachability head (default "g_ws").
         ws_with_logits: If True, treat prediction for g_ws as logits and use BCEWithLogits.
-        mask_by_ws: If True, only supervise non-ws heads where ws_mask==1.
+        reg_mask_key: Batch key for regression mask (default "delta_mask").
+        reg_mask_by_key: If True, use reg_mask_key when present.
+        mask_by_ws: Fallback: if True, only supervise non-ws heads where ws_mask==1.
         huber_delta: Delta for SmoothL1/Huber loss.
         ws_pos_weight: Optional positive-class weight for g_ws (for BCEWithLogits).
+        reg_clamp: If True, clamp regression labels to [0,1].
         eps: Numerical epsilon.
     """
 
@@ -110,18 +114,24 @@ class MultiTaskLoss(nn.Module):
         head_weights: Dict[str, float],
         ws_name: str = "g_ws",
         ws_with_logits: bool = True,
+        reg_mask_key: str = "delta_mask",
+        reg_mask_by_key: bool = True,
         mask_by_ws: bool = True,
         huber_delta: float = 0.05,
         ws_pos_weight: Optional[float] = None,
+        reg_clamp: bool = False,
         eps: float = 1e-8,
     ) -> None:
         super().__init__()
         self.head_weights = {str(k): float(v) for k, v in head_weights.items()}
         self.ws_name = str(ws_name)
         self.ws_with_logits = bool(ws_with_logits)
+        self.reg_mask_key = str(reg_mask_key)
+        self.reg_mask_by_key = bool(reg_mask_by_key)
         self.mask_by_ws = bool(mask_by_ws)
         self.huber_delta = float(huber_delta)
         self.ws_pos_weight = None if ws_pos_weight is None else float(ws_pos_weight)
+        self.reg_clamp = bool(reg_clamp)
         self.eps = float(eps)
 
         # Uncertainty weighting: learnable log-sigma per head.
@@ -145,9 +155,12 @@ class MultiTaskLoss(nn.Module):
             head_weights=dict(head_weights),
             ws_name=str(_get(loss_cfg, "ws_name", "g_ws")),
             ws_with_logits=bool(_get(loss_cfg, "ws_with_logits", True)),
+            reg_mask_key=str(_get(loss_cfg, "reg_mask_key", "delta_mask")),
+            reg_mask_by_key=bool(_get(loss_cfg, "reg_mask_by_key", True)),
             mask_by_ws=bool(_get(loss_cfg, "mask_by_ws", True)),
             huber_delta=float(_get(loss_cfg, "huber_delta", 0.05)),
             ws_pos_weight=_get(loss_cfg, "ws_pos_weight", None),
+            reg_clamp=bool(_get(loss_cfg, "reg_clamp", False)),
             eps=float(_get(loss_cfg, "eps", 1e-8)),
         )
 
@@ -174,15 +187,20 @@ class MultiTaskLoss(nn.Module):
         else:
             w = _as_float_tensor(sample_weight, device).reshape(-1)
 
-        # Prefer ws_mask for regression masking (contract-level mask).
-        ws_mask = batch.get("ws_mask", None)
-        if ws_mask is not None:
-            ws_mask_t = _as_float_tensor(ws_mask, device).reshape(-1)
-            ws_valid = (ws_mask_t > 0.5).float()
+        # Build regression mask.
+        reg_mask = None
+        if self.reg_mask_by_key and self.reg_mask_key and self.reg_mask_key in batch:
+            reg_mask_t = _as_float_tensor(batch[self.reg_mask_key], device).reshape(-1)
+            reg_mask = (reg_mask_t > 0.5).float()
         else:
-            if self.ws_name not in labels:
-                raise ValueError("[losses] ws_mask missing and ws label not found; cannot build mask.")
-            ws_valid = (labels[self.ws_name] > 0.5).float()
+            ws_mask = batch.get("ws_mask", None)
+            if ws_mask is not None:
+                ws_mask_t = _as_float_tensor(ws_mask, device).reshape(-1)
+                reg_mask = (ws_mask_t > 0.5).float()
+            elif self.ws_name in labels:
+                reg_mask = (labels[self.ws_name] > 0.5).float()
+            else:
+                reg_mask = torch.ones((next(iter(labels.values())).shape[0],), device=device, dtype=torch.float32)
 
         per_head: Dict[str, torch.Tensor] = {}
         stats: Dict[str, float] = {}
@@ -208,7 +226,7 @@ class MultiTaskLoss(nn.Module):
             per_head[self.ws_name] = loss_ws
             stats[f"loss/{self.ws_name}"] = float(loss_ws.detach().cpu())
 
-        # Regression heads: masked by ws_valid if enabled.
+        # Regression heads: masked by reg_mask if enabled.
         for name, p in preds.items():
             if name == self.ws_name:
                 continue
@@ -216,13 +234,15 @@ class MultiTaskLoss(nn.Module):
                 # Allow model to output extra heads without supervision in stage1.
                 continue
 
-            y = labels[name].clamp(0.0, 1.0)
+            y = labels[name]
+            if self.reg_clamp:
+                y = y.clamp(0.0, 1.0)
             p = p.reshape(-1)
 
-            if self.mask_by_ws:
-                mask = ws_valid
+            if self.mask_by_ws or self.reg_mask_by_key:
+                mask = reg_mask
             else:
-                mask = torch.ones_like(ws_valid)
+                mask = torch.ones_like(reg_mask)
 
             # SmoothL1 == Huber variant.
             reg = F.smooth_l1_loss(p, y, reduction="none", beta=self.huber_delta)

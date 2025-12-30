@@ -11,7 +11,7 @@ data:
   # json_root: "/home/user/mcfp/data/morph_specs/franka"
   json_root: "D:/code/mcfp/data/morph_specs/franka"
   # capability_root: "data/capability/morph_specs/franka/franka_base"
-  capability_root: "data/capability/morph_specs/franka/franka_base"
+  capability_root: "data/capability/morph_specs/franka/franka_v0010"
 
 sim:
   base_link: "panda_link0"

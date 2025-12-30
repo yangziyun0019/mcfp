@@ -309,5 +309,19 @@
       "generated_from": "urdf",
       "warning": "Base spec uses identity perturbations; variants should materialize chain edits."
     }
+  },
+  "workspace": {
+    "aabb_min": [
+      -0.8831876516342163,
+      -0.885696530342102,
+      -0.3344449996948242
+    ],
+    "aabb_max": [
+      0.8841031789779663,
+      0.8832108974456787,
+      1.2082279920578003
+    ],
+    "bounds_samples": 50000,
+    "margin": 1.1
   }
 }

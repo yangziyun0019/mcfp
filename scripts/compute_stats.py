@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 import numpy as np
 from omegaconf import OmegaConf
 
-from mcfp.data.io import read_jsonl, load_capability_map
+from mcfp.data.io import read_jsonl, load_pose_samples
 from mcfp.utils.logging import setup_logger
 
 
@@ -27,8 +27,16 @@ def main() -> None:
     split_path = Path(cfg.data.train_split_path).resolve()
     out_path = Path(cfg.output.stats_path).resolve()
 
-    label_keys = list(cfg.data.label_keys)
     percentiles = list(cfg.data.percentiles)
+    label_keys = list(getattr(cfg.data, "label_keys", [])) or [
+        "g_ws",
+        "delta_pos_x",
+        "delta_pos_y",
+        "delta_pos_z",
+        "delta_rot_x",
+        "delta_rot_y",
+        "delta_rot_z",
+    ]
 
     records = read_jsonl(manifest_path)
     rec_by_id = {r["variant_id"]: r for r in records}
@@ -42,29 +50,45 @@ def main() -> None:
         if vid not in rec_by_id:
             logger.warning(f"[stats] Missing vid in manifest: {vid}")
             continue
-        cap_path = (repo_root / rec_by_id[vid]["cap_path"]).resolve()
-        cap = load_capability_map(cap_path)
+        pose_path = (repo_root / rec_by_id[vid]["pose_path"]).resolve()
+        data = load_pose_samples(pose_path)
 
-        gws = np.asarray(cap["g_ws"], dtype=np.float32).reshape(-1)
-        ws_mask = gws > 0.5
+        labels = np.asarray(data.get("labels"), dtype=np.float32).reshape(-1)
+        delta_pos = np.asarray(data.get("delta_pos"), dtype=np.float32)
+        delta_rot = np.asarray(data.get("delta_rot"), dtype=np.float32)
+        delta_mask = np.asarray(data.get("delta_mask"), dtype=np.float32).reshape(-1) > 0.5
+
+        if labels.ndim != 1:
+            logger.warning(f"[stats] Bad labels shape: {pose_path} {labels.shape}")
+            continue
+        if delta_pos.ndim != 2 or delta_pos.shape[1] != 3:
+            logger.warning(f"[stats] Bad delta_pos shape: {pose_path} {delta_pos.shape}")
+            continue
+        if delta_rot.ndim != 2 or delta_rot.shape[1] != 3:
+            logger.warning(f"[stats] Bad delta_rot shape: {pose_path} {delta_rot.shape}")
+            continue
 
         for k in label_keys:
-            if k not in cap:
-                logger.warning(f"[stats] Missing key={k} in {cap_path}")
-                continue
-            x = np.asarray(cap[k], dtype=np.float32).reshape(-1)
-            if x.shape[0] != gws.shape[0]:
-                logger.warning(f"[stats] Shape mismatch key={k} in {cap_path}: {x.shape} vs {gws.shape}")
-                continue
-
             if k == "g_ws":
-                agg[k].append(x)
+                agg[k].append(labels)
+                continue
+            if not delta_mask.any():
+                continue
+            if k.startswith("delta_pos_"):
+                axis = {"x": 0, "y": 1, "z": 2}.get(k.split("_")[-1], None)
+                if axis is None:
+                    raise ValueError(f"[stats] Unknown label key: {k}")
+                agg[k].append(delta_pos[delta_mask][:, axis])
+            elif k.startswith("delta_rot_"):
+                axis = {"x": 0, "y": 1, "z": 2}.get(k.split("_")[-1], None)
+                if axis is None:
+                    raise ValueError(f"[stats] Unknown label key: {k}")
+                agg[k].append(delta_rot[delta_mask][:, axis])
             else:
-                # Only statistics over valid workspace cells.
-                agg[k].append(x[ws_mask])
+                raise ValueError(f"[stats] Unknown label key: {k}")
 
     stats: Dict[str, Any] = {
-        "label_keys": label_keys,
+        "label_keys": list(agg.keys()),
         "percentiles": percentiles,
         "per_key": {},
     }

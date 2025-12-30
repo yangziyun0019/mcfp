@@ -128,9 +128,9 @@ class PoseEncoder(nn.Module):
     """Encode a task-space query point feature vector into a latent embedding.
 
     Expected input convention (Stage-1 default):
-      - pose_feats: [B, 9]
-        first 3 dims: xyz normalized to [0,1] (or [-1,1], both workable)
-        remaining dims: auxiliary scalars (e.g., radial ratio, anisotropic scale ratios)
+      - pose_feats: [B, F]
+        first 3 dims: normalized xyz (primary position feature)
+        remaining dims: auxiliary scalars (e.g., extra position ratios, quaternion)
 
     The encoder uses Fourier features on xyz and concatenates auxiliary scalars.
 

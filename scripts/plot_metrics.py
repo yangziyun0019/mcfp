@@ -12,18 +12,17 @@ import matplotlib.pyplot as plt
 # -----------------------------
 # User config (edit here)
 # -----------------------------
-CSV_PATH = Path("runs/stage1/exp_aligned_v1/metrics.csv")
-OUT_PATH = None  # e.g. Path("runs/stage1/exp_aligned_v1/loss_plot.png")
+CSV_PATH = Path("runs/stage1/exp_pose6d_v1/metrics.csv")
+OUT_PATH = None  # e.g. Path("runs/stage1/exp_pose6d_v1/loss_plot.png")
 MA_WINDOW = 200  # moving average window (steps)
 SHOW = False  # set True to open a window
 WATCH = True  # set True to refresh when CSV updates
 WATCH_INTERVAL_S = 5  # seconds between checks
 
 # Plot config
-TRAIN_LOSS_KEY = "loss/weighted_no_reg"
-VAL_PLOT_MODE = "loss"  # "loss" or "metric"
-VAL_LOSS_KEY = "loss/weighted_no_reg"
-VAL_METRIC_KEY = "ws_f1"
+GWS_LOSS_KEY = "loss/g_ws"
+DELTA_POS_KEYS = ["loss/delta_pos_x", "loss/delta_pos_y", "loss/delta_pos_z"]
+DELTA_ROT_KEYS = ["loss/delta_rot_x", "loss/delta_rot_y", "loss/delta_rot_z"]
 
 
 def _to_float(s: str) -> float | None:
@@ -46,17 +45,20 @@ def _read_metrics(path: Path, phase: str) -> Tuple[List[int], Dict[str, List[flo
             if step is None:
                 continue
             step_i = int(step)
+            row_series: Dict[str, float] = {}
+            for k, v in row.items():
+                if k in ("phase", "step", "max_steps"):
+                    continue
+                fv = _to_float(v)
+                if fv is None:
+                    continue
+                row_series[k] = fv
 
-            loss_cols = [k for k in row.keys() if k == "loss/total" or k.startswith("loss/")]
-            loss_cols = sorted(set(loss_cols))
-            if not loss_cols:
+            if len(row_series) == 0:
                 continue
 
             steps.append(step_i)
-            for k in loss_cols:
-                v = _to_float(row.get(k, ""))
-                if v is None:
-                    continue
+            for k, v in row_series.items():
                 series.setdefault(k, []).append(v)
 
     return steps, series
@@ -77,48 +79,92 @@ def _moving_average(values: List[float], window: int) -> List[float]:
     return out
 
 
+def _sum_series(series: Dict[str, List[float]], keys: List[str], label: str) -> List[float]:
+    vals: List[List[float]] = []
+    for k in keys:
+        if k not in series:
+            raise SystemExit(f"{label} missing in metrics.csv: {k}")
+        vals.append(series[k])
+    n = len(vals[0])
+    if any(len(v) != n for v in vals):
+        raise SystemExit(f"{label} length mismatch across keys: {keys}")
+    out = []
+    for i in range(n):
+        out.append(float(sum(v[i] for v in vals)))
+    return out
+
+
 def _plot_once(csv_path: Path) -> None:
     if not csv_path.exists():
         raise SystemExit(f"metrics.csv not found: {csv_path}")
 
     train_steps, train_series = _read_metrics(csv_path, phase="train")
-    if TRAIN_LOSS_KEY not in train_series:
-        raise SystemExit(f"{TRAIN_LOSS_KEY} not found in metrics.csv.")
-
     val_steps, val_series = _read_metrics(csv_path, phase="val")
-    if VAL_PLOT_MODE == "loss":
-        if VAL_LOSS_KEY not in val_series:
-            raise SystemExit(f"{VAL_LOSS_KEY} not found in metrics.csv.")
-        val_key = VAL_LOSS_KEY
+
+    if GWS_LOSS_KEY not in train_series:
+        raise SystemExit(f"{GWS_LOSS_KEY} not found in training rows of metrics.csv.")
+
+    train_gws = train_series[GWS_LOSS_KEY]
+    train_pos = _sum_series(train_series, DELTA_POS_KEYS, "delta_pos")
+    train_rot = _sum_series(train_series, DELTA_ROT_KEYS, "delta_rot")
+
+    has_val = True
+    if len(val_steps) == 0:
+        has_val = False
     else:
-        if VAL_METRIC_KEY not in val_series:
-            raise SystemExit(f"{VAL_METRIC_KEY} not found in metrics.csv.")
-        val_key = VAL_METRIC_KEY
+        required_val = [GWS_LOSS_KEY] + DELTA_POS_KEYS + DELTA_ROT_KEYS
+        missing_val = [k for k in required_val if k not in val_series]
+        if missing_val:
+            has_val = False
+
+    if has_val:
+        val_gws = val_series[GWS_LOSS_KEY]
+        val_pos = _sum_series(val_series, DELTA_POS_KEYS, "delta_pos")
+        val_rot = _sum_series(val_series, DELTA_ROT_KEYS, "delta_rot")
+    else:
+        val_gws = []
+        val_pos = []
+        val_rot = []
 
     # Sort by step for stable curves.
-    train_pairs = sorted(zip(train_steps, train_series[TRAIN_LOSS_KEY]), key=lambda p: p[0])
+    train_pairs = sorted(zip(train_steps, train_gws, train_pos, train_rot), key=lambda p: p[0])
     train_steps = [p[0] for p in train_pairs]
-    train_vals = [p[1] for p in train_pairs]
+    train_gws = [p[1] for p in train_pairs]
+    train_pos = [p[2] for p in train_pairs]
+    train_rot = [p[3] for p in train_pairs]
 
-    val_pairs = sorted(zip(val_steps, val_series[val_key]), key=lambda p: p[0])
-    val_steps = [p[0] for p in val_pairs]
-    val_vals = [p[1] for p in val_pairs]
+    if has_val:
+        val_pairs = sorted(zip(val_steps, val_gws, val_pos, val_rot), key=lambda p: p[0])
+        val_steps = [p[0] for p in val_pairs]
+        val_gws = [p[1] for p in val_pairs]
+        val_pos = [p[2] for p in val_pairs]
+        val_rot = [p[3] for p in val_pairs]
 
     plt.clf()
     fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
 
-    axes[0].plot(train_steps, train_vals, label=f"{TRAIN_LOSS_KEY} (raw)", linewidth=1.0, alpha=0.35)
-    train_ma = _moving_average(train_vals, int(MA_WINDOW))
-    axes[0].plot(train_steps, train_ma, label=f"{TRAIN_LOSS_KEY} (ma{int(MA_WINDOW)})", linewidth=2.0)
-    axes[0].set_title("train loss")
+    axes[0].plot(train_steps, train_gws, label="g_ws (raw)", linewidth=1.0, alpha=0.35)
+    axes[0].plot(train_steps, _moving_average(train_gws, int(MA_WINDOW)), label=f"g_ws (ma{int(MA_WINDOW)})", linewidth=2.0)
+    axes[0].plot(train_steps, train_pos, label="delta_pos_sum (raw)", linewidth=1.0, alpha=0.35)
+    axes[0].plot(train_steps, _moving_average(train_pos, int(MA_WINDOW)), label=f"delta_pos_sum (ma{int(MA_WINDOW)})", linewidth=2.0)
+    axes[0].plot(train_steps, train_rot, label="delta_rot_sum (raw)", linewidth=1.0, alpha=0.35)
+    axes[0].plot(train_steps, _moving_average(train_rot, int(MA_WINDOW)), label=f"delta_rot_sum (ma{int(MA_WINDOW)})", linewidth=2.0)
+    axes[0].set_title("train losses")
     axes[0].set_ylabel("loss")
     axes[0].grid(True, alpha=0.3)
     axes[0].legend(fontsize=8, ncol=1)
 
-    axes[1].plot(val_steps, val_vals, label=f"{val_key} (raw)", linewidth=1.0, alpha=0.35)
-    val_ma = _moving_average(val_vals, int(MA_WINDOW))
-    axes[1].plot(val_steps, val_ma, label=f"{val_key} (ma{int(MA_WINDOW)})", linewidth=2.0)
-    axes[1].set_title(f"val {val_key}")
+    if has_val:
+        axes[1].plot(val_steps, val_gws, label="g_ws (raw)", linewidth=1.0, alpha=0.35)
+        axes[1].plot(val_steps, _moving_average(val_gws, int(MA_WINDOW)), label=f"g_ws (ma{int(MA_WINDOW)})", linewidth=2.0)
+        axes[1].plot(val_steps, val_pos, label="delta_pos_sum (raw)", linewidth=1.0, alpha=0.35)
+        axes[1].plot(val_steps, _moving_average(val_pos, int(MA_WINDOW)), label=f"delta_pos_sum (ma{int(MA_WINDOW)})", linewidth=2.0)
+        axes[1].plot(val_steps, val_rot, label="delta_rot_sum (raw)", linewidth=1.0, alpha=0.35)
+        axes[1].plot(val_steps, _moving_average(val_rot, int(MA_WINDOW)), label=f"delta_rot_sum (ma{int(MA_WINDOW)})", linewidth=2.0)
+        axes[1].set_title("val losses")
+    else:
+        axes[1].set_title("val losses (no data yet)")
+        axes[1].text(0.5, 0.5, "no val rows found", ha="center", va="center", transform=axes[1].transAxes)
     axes[1].set_xlabel("step")
     axes[1].set_ylabel("value")
     axes[1].grid(True, alpha=0.3)

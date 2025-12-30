@@ -1,66 +1,56 @@
 # scripts/generate_capability_single.py
-"""Entry script for generating a capability map from URDF or Morphology Spec."""
+"""Entry script for generating IK pose samples from URDF."""
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import sys
 
 from mcfp.utils.config import load_config
 from mcfp.utils.logging import setup_logger
-from mcfp.sim.grid_builder import generate_capability_for_robot
+from mcfp.sim.pose_dataset import generate_pose_dataset_ik
+from mcfp.data.pose_neighbors import build_pose_deltas
+
+
+def _parse_args() -> argparse.Namespace:
+    """Parse CLI arguments."""
+    parser = argparse.ArgumentParser(description="Generate IK pose samples for a single robot.")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="configs/data_gen_pose_ik_franka.yaml",
+        help="Path to YAML config file.",
+    )
+    return parser.parse_args()
 
 
 def main() -> None:
-    """Main entry point for single-robot capability generation."""
-    
-    # 1. Load Configuration
-    # You can switch config files here or parse args
-    config_path = "configs/data_gen_single_rm65b.yaml"
-    cfg = load_config(config_path)
+    """Main entry point for single-robot IK pose dataset generation."""
+    args = _parse_args()
+    cfg = load_config(args.config)
 
     # 2. Setup Logger
     logger = setup_logger(
         name="mcfp.sim.data_gen_single",
         log_dir=cfg.logging.log_dir,
     )
-    logger.info(f"Loaded configuration from: {config_path}")
+    logger.info(f"Loaded configuration from: {args.config}")
 
-    # 3. Resolve Paths & Source Mode
+    # 3. Resolve Paths
     robot_name = cfg.robot.name
-    cap_root = Path(cfg.data.capability_root)
-    output_dir = cap_root / robot_name
+    urdf_root = Path(cfg.data.urdf_root)
+    urdf_filename = cfg.robot.urdf_filename
+    urdf_path = urdf_root / urdf_filename
+
+    output_root = Path(cfg.data.output_root)
+    output_name = getattr(cfg.data, "output_name", "pose_samples.npz")
+    output_dir = output_root / robot_name
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "capability_map.npz"
+    output_path = output_dir / output_name
 
-    # Determine source type (urdf vs json) based on config
-    source_type = getattr(cfg.robot, "source_type", "urdf").lower()
-    
-    input_path: Path
-    is_spec_mode: bool = False
-
-    if source_type == "json":
-        # --- JSON Spec Mode ---
-        json_root = Path(cfg.data.json_root)
-        spec_filename = cfg.robot.spec_filename
-        input_path = json_root / spec_filename
-        is_spec_mode = True
-        logger.info(f"[Mode] Using JSON Morphology Spec: {input_path}")
-        
-    elif source_type == "urdf":
-        # --- URDF Mode (Legacy) ---
-        urdf_root = Path(cfg.data.urdf_root)
-        urdf_filename = cfg.robot.urdf_filename
-        input_path = urdf_root / urdf_filename
-        is_spec_mode = False
-        logger.info(f"[Mode] Using URDF Description: {input_path}")
-        
-    else:
-        logger.error(f"Unknown source_type: {source_type}")
-        sys.exit(1)
-
-    if not input_path.exists():
-        logger.error(f"Input file does not exist: {input_path}")
+    if not urdf_path.exists():
+        logger.error(f"URDF file does not exist: {urdf_path}")
         sys.exit(1)
 
     # 4. Extract Sim Parameters
@@ -70,19 +60,28 @@ def main() -> None:
     logger.info(f"Target Output: {output_path}")
 
     # 5. Execute Generation
-    # Note: 'urdf_path' argument in grid_builder should be renamed to 'input_source' 
-    # to reflect generic usage, or passed positionally if the signature was updated.
-    generate_capability_for_robot(
-        input_source=input_path,          # Generic input path (was urdf_path)
+    generate_pose_dataset_ik(
+        urdf_path=urdf_path,
         output_path=output_path,
-        grid_cfg=cfg.grid,
+        cfg=cfg,
         base_link=base_link,
         end_effector_link=end_effector_link,
         logger=logger,
-        is_morphology_spec=is_spec_mode   # Flag to trigger new logic in RobotModel
     )
 
-    logger.info("Capability generation process finished successfully.")
+    delta_cfg = getattr(cfg, "delta", None)
+    delta_enable = bool(getattr(delta_cfg, "enable", False)) if delta_cfg is not None else False
+    if delta_enable:
+        delta_name = getattr(delta_cfg, "output_name", "pose_samples_with_deltas.npz")
+        delta_path = output_dir / delta_name
+        build_pose_deltas(
+            input_path=output_path,
+            output_path=delta_path,
+            cfg=cfg,
+            logger=logger,
+        )
+
+    logger.info("Pose dataset generation finished successfully.")
 
 
 if __name__ == "__main__":

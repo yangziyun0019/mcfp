@@ -1,140 +1,134 @@
-# scripts/generate_morph_specs_local.py
+"""Convert URDFs to morphology JSON specs with workspace AABB."""
 from __future__ import annotations
 
-import random
+import argparse
 from pathlib import Path
 from typing import Any, Dict, List
 
-from mcfp.data.morphology_io import generate_variants_from_urdf
+from mcfp.data.morphology_io import save_morph_json, urdf_to_morph_dict
+from mcfp.sim.workspace_bounds import compute_urdf_aabb
+from mcfp.utils.config import load_config
 from mcfp.utils.logging import setup_logger
+from mcfp.utils.seed import set_seed
 
 
-# ---------------------------------------------------------------------------
-# Hard-coded local configuration.
-#
-# You can edit this ROBOTS list manually whenever you add a new URDF or
-# want to change the number of variants / perturbation ranges.
-#
-# Paths are relative to the repository root by default. Adjust them to
-# match your actual directory layout.
-# ---------------------------------------------------------------------------
-
-ROBOTS: List[Dict[str, Any]] = [
-    # {
-    #     "urdf_path": "/home/user/mcfp/data/urdf/rm_65_b_description/urdf/rm_65_b_description.urdf",
-    #     "output_dir": "/home/user/mcfp/data/morph_specs/rm65",
-
-    #     "family": "rm65",
-    #     "robot_name": "rm65",
-    #     "base_link": "base_link",
-    #     "ee_link": "Link6",
-    #     "num_variants": 50,
-    #     "length_scale_range": (0.8, 1.2),
-    #     "joint_limit_scale_range": (0.6, 1.0),
-    #     "joint_limit_shift_fraction": 0.2,
-    # },
-    # {
-    #     "urdf_path": "/home/user/mcfp/data/urdf/interbotix_descriptions/urdf/wx200.urdf",
-    #     "output_dir": "/home/user/mcfp/data/morph_specs/wx200",
-    #     "family": "wx200",
-    #     "robot_name": "wx200",
-    #     "base_link": "/base_link",
-    #     "ee_link": "/ee_arm_link",
-    #     "num_variants": 50,
-    #     "length_scale_range": (0.8, 1.2),
-    #     "joint_limit_scale_range": (0.6, 1.0),
-    #     "joint_limit_shift_fraction": 0.2,
-    # },
-    # {
-    #     "urdf_path": "/home/user/mcfp/data/urdf/open_manipulator_description/urdf/open_manipulator.urdf",
-    #     "output_dir": "/home/user/mcfp/data/morph_specs/open_manipulator",
-    #     "family": "open_manipulator",
-    #     "robot_name": "open_manipulator",
-    #     "base_link": "link1",
-    #     "ee_link": "end_effector_link",
-    #     "num_variants": 50,
-    #     "length_scale_range": (0.8, 1.2),
-    #     "joint_limit_scale_range": (0.6, 1.0),
-    #     "joint_limit_shift_fraction": 0.2,
-    # },
-    {
-        "urdf_path": "D:/code/mcfp/data/urdf/franka_emika_panda/urdf/panda_arm.urdf",
-        "output_dir": "D:/code/mcfp/data/morph_specs/franka",
-        "family": "franka",
-        "robot_name": "franka",
-        "base_link": "panda_link0",
-        "ee_link": "panda_link7",
-        "num_variants": 50,
-        "length_scale_range": (0.8, 1.2),
-        "joint_limit_scale_range": (0.6, 1.0),
-        "joint_limit_shift_fraction": 0.2,
-    },
-]
+def _parse_args() -> argparse.Namespace:
+    """Parse CLI arguments."""
+    parser = argparse.ArgumentParser(description="Convert URDFs to morphology JSON specs.")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="configs/convert_morph_json.yaml",
+        help="Path to YAML config file.",
+    )
+    return parser.parse_args()
 
 
-# Global seed for all perturbations. Change this if you want a new batch.
-GLOBAL_SEED: int = 42
+def _get_cfg_value(cfg: Any, key: str) -> Any:
+    """Retrieve mandatory value from config object or dict."""
+    if isinstance(cfg, dict):
+        if key not in cfg:
+            raise ValueError(f"[convert_urdf_to_morph_json] Config missing key '{key}'.")
+        return cfg[key]
+    if not hasattr(cfg, key):
+        raise ValueError(f"[convert_urdf_to_morph_json] Config missing attr '{key}'.")
+    return getattr(cfg, key)
+
+
+def _get_cfg_val_default(cfg: Any, key: str, default: Any) -> Any:
+    """Retrieve optional value from config object or dict."""
+    if isinstance(cfg, dict):
+        return cfg.get(key, default)
+    return getattr(cfg, key, default)
 
 
 def main() -> None:
-    """Generate morphology JSON specs for all robots defined in ROBOTS."""
-    logger = setup_logger(name="mcfp.scripts.generate_morph_specs_local")
-    random.seed(GLOBAL_SEED)
-    logger.info(f"Global random seed set to {GLOBAL_SEED}.")
+    """Generate morphology JSON specs for all robots defined in config."""
+    args = _parse_args()
+    cfg = load_config(args.config)
 
-    for idx, cfg in enumerate(ROBOTS):
-        urdf_path = Path(cfg["urdf_path"]).resolve()
-        output_dir = Path(cfg["output_dir"]).resolve()
+    logger = setup_logger(
+        name="mcfp.scripts.convert_urdf_to_morph_json",
+        log_dir=cfg.logging.log_dir,
+    )
+    logger.info(f"Loaded configuration from: {args.config}")
 
-        family = cfg.get("family")
-        robot_name = cfg.get("robot_name")
-        base_link = cfg.get("base_link")
-        ee_link = cfg.get("ee_link")
-        num_variants = int(cfg.get("num_variants", 0))
+    run_cfg = getattr(cfg, "run", None)
+    seed = getattr(run_cfg, "seed", None) if run_cfg is not None else None
+    if seed is not None:
+        deterministic = bool(getattr(run_cfg, "deterministic", True))
+        set_seed(int(seed), deterministic=deterministic)
+        logger.info(f"Global random seed set to {seed}.")
 
-        length_scale_range = cfg.get("length_scale_range", (0.7, 1.3))
-        joint_limit_scale_range = cfg.get("joint_limit_scale_range", (0.5, 1.0))
-        joint_limit_shift_fraction = float(
-            cfg.get("joint_limit_shift_fraction", 0.2)
-        )
+    aabb_cfg = getattr(cfg, "aabb", None)
+    bounds_samples = int(getattr(aabb_cfg, "bounds_samples", 50000)) if aabb_cfg is not None else 50000
+    margin = float(getattr(aabb_cfg, "margin", 1.1)) if aabb_cfg is not None else 1.1
+
+    robots: List[Dict[str, Any]] = list(getattr(cfg, "robots", []))
+    if not robots:
+        raise ValueError("[convert_urdf_to_morph_json] No robots configured.")
+
+    for idx, robot_cfg in enumerate(robots):
+        urdf_path = Path(_get_cfg_value(robot_cfg, "urdf_path")).resolve()
+        output_dir = Path(_get_cfg_value(robot_cfg, "output_dir")).resolve()
+
+        family = _get_cfg_val_default(robot_cfg, "family", None)
+        robot_name = _get_cfg_val_default(robot_cfg, "robot_name", None) or urdf_path.stem
+        base_link = _get_cfg_val_default(robot_cfg, "base_link", None)
+        ee_link = _get_cfg_val_default(robot_cfg, "ee_link", None)
 
         logger.info(
-            f"[{idx + 1}/{len(ROBOTS)}] Generating morph specs for URDF:\n"
-            f"  URDF        : {urdf_path}\n"
-            f"  Output dir  : {output_dir}\n"
-            f"  Family      : {family}\n"
-            f"  Robot name  : {robot_name or urdf_path.stem}\n"
-            f"  Base link   : {base_link or '(auto)'}\n"
-            f"  EE link     : {ee_link or '(auto)'}\n"
-            f"  Variants    : {num_variants}\n"
-            f"  Length scale: {length_scale_range}\n"
-            f"  Limit scale : {joint_limit_scale_range}\n"
-            f"  Shift frac  : {joint_limit_shift_fraction}"
+            f"[{idx + 1}/{len(robots)}] Converting URDF:\n"
+            f"  URDF       : {urdf_path}\n"
+            f"  Output dir : {output_dir}\n"
+            f"  Family     : {family}\n"
+            f"  Robot name : {robot_name}\n"
+            f"  Base link  : {base_link or '(auto)'}\n"
+            f"  EE link    : {ee_link or '(auto)'}"
         )
 
-        json_paths = generate_variants_from_urdf(
+        if not urdf_path.is_file():
+            logger.error(f"[{idx + 1}/{len(robots)}] URDF not found: {urdf_path}")
+            continue
+
+        variant_id = f"{robot_name}_base"
+        morph_dict = urdf_to_morph_dict(
             urdf_path=urdf_path,
-            output_dir=output_dir,
+            robot_name=robot_name,
             family=family,
             source="real",
-            robot_name=robot_name,
             base_link=base_link,
             ee_link=ee_link,
-            num_variants=num_variants,
-            length_scale_range=(
-                float(length_scale_range[0]),
-                float(length_scale_range[1]),
-            ),
-            joint_limit_scale_range=(
-                float(joint_limit_scale_range[0]),
-                float(joint_limit_scale_range[1]),
-            ),
-            joint_limit_shift_fraction=joint_limit_shift_fraction,
+            variant_id=variant_id,
         )
 
+        try:
+            aabb_min, aabb_max = compute_urdf_aabb(
+                urdf_path=urdf_path,
+                base_link=base_link,
+                end_effector_link=ee_link,
+                samples=bounds_samples,
+                margin=margin,
+                logger=logger,
+            )
+        except Exception as exc:
+            logger.error(f"[{idx + 1}/{len(robots)}] AABB failed: {exc}")
+            continue
+
+        morph_dict["workspace"] = {
+            "aabb_min": aabb_min.tolist(),
+            "aabb_max": aabb_max.tolist(),
+            "bounds_samples": int(bounds_samples),
+            "margin": float(margin),
+        }
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{variant_id}.json"
+        save_morph_json(morph_dict, output_path)
+
         logger.info(
-            f"[{idx + 1}/{len(ROBOTS)}] Done. Generated "
-            f"{len(json_paths)} JSON files under {output_dir}."
+            f"[{idx + 1}/{len(robots)}] Done. Generated "
+            f"{output_path}"
         )
 
 

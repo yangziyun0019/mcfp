@@ -5,7 +5,7 @@
     "variant_id": "open_manipulator_base",
     "parent_variant_id": null,
     "source": "real",
-    "urdf_path": "/home/user/mcfp/data/urdf/open_manipulator_description/urdf/open_manipulator.urdf",
+    "urdf_path": "D:\\code\\mcfp\\data\\urdf\\open_manipulator_description\\urdf\\open_manipulator.urdf",
     "dof": 4,
     "base_link": "link1",
     "ee_link": "end_effector_link"
@@ -229,5 +229,19 @@
       "generated_from": "urdf",
       "warning": "Base spec uses identity perturbations; variants should materialize chain edits."
     }
+  },
+  "workspace": {
+    "aabb_min": [
+      -0.37629634141921997,
+      -0.4104084372520447,
+      -0.2284086048603058
+    ],
+    "aabb_max": [
+      0.41863566637039185,
+      0.4072829484939575,
+      0.4824993908405304
+    ],
+    "bounds_samples": 50000,
+    "margin": 1.1
   }
 }

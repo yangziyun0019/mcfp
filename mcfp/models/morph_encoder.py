@@ -93,6 +93,8 @@ def _aggregate_mean_edge(
     msg = msg_mlp(m_in)
 
     out = torch.zeros((num_nodes, msg.shape[-1]), device=h.device, dtype=h.dtype)
+    if msg.dtype != out.dtype:
+        msg = msg.to(dtype=out.dtype)
     out = out.index_add(0, dst, msg)
 
     ones = torch.ones((dst.shape[0],), device=h.device, dtype=h.dtype)

@@ -41,6 +41,17 @@ class KinematicsBackend(Protocol):
         """Return the geometric Jacobian at the end-effector."""
         ...
 
+    def ik_pose(
+        self,
+        target_pos: np.ndarray,
+        target_quat: np.ndarray,
+        rest_pose: Optional[np.ndarray] = None,
+        max_iters: int = 100,
+        residual_threshold: float = 1e-5,
+    ) -> Optional[np.ndarray]:
+        """Return a joint configuration that reaches the target pose."""
+        ...
+
 
 class PyBulletKinematics:
     """PyBullet-based implementation of KinematicsBackend.
@@ -54,6 +65,7 @@ class PyBulletKinematics:
         self,
         urdf_path: Path,
         joint_names: List[str],
+        joint_limits: Optional[np.ndarray],
         base_link: Optional[str],
         end_effector_link: Optional[str],
         logger,
@@ -62,6 +74,12 @@ class PyBulletKinematics:
         self._urdf_path = Path(urdf_path).resolve()
         self._joint_names = list(joint_names)
         self._target_ee_name = end_effector_link
+        self._joint_limits = None
+
+        if joint_limits is not None:
+            jl = np.asarray(joint_limits, dtype=float)
+            if jl.ndim == 2 and jl.shape[0] == len(self._joint_names):
+                self._joint_limits = jl
 
         if not self._urdf_path.is_file():
             raise FileNotFoundError(f"URDF file not found: {self._urdf_path}")
@@ -113,6 +131,10 @@ class PyBulletKinematics:
                 self._logger.warning(
                     f"[PyBulletKinematics] Joint '{name}' not found in URDF!"
                 )
+
+        self._actuated_name_to_idx = {n: i for i, n in enumerate(self._joint_names)}
+        self._num_joints = p.getNumJoints(self._robot_id, physicsClientId=self._client_id)
+        self._init_ik_bounds()
 
         # --- 3. Resolve End-Effector ---
         self._ee_link_index = self._resolve_ee_index(end_effector_link, num_joints)
@@ -193,6 +215,62 @@ class PyBulletKinematics:
         
         return np.vstack([jac_t, jac_r])
 
+    def ik_pose(
+        self,
+        target_pos: np.ndarray,
+        target_quat: np.ndarray,
+        rest_pose: Optional[np.ndarray] = None,
+        max_iters: int = 100,
+        residual_threshold: float = 1e-5,
+    ) -> Optional[np.ndarray]:
+        """Compute an IK solution for the given pose."""
+        if self._num_joints <= 0:
+            return None
+
+        tp = np.asarray(target_pos, dtype=float).reshape(3)
+        tq = np.asarray(target_quat, dtype=float).reshape(4)
+
+        if rest_pose is None:
+            rest = self._ik_rest
+        else:
+            rest_arr = np.asarray(rest_pose, dtype=float).reshape(-1)
+            if rest_arr.shape[0] != len(self._joint_names):
+                raise ValueError(
+                    f"rest_pose dim {rest_arr.shape[0]} != num_joints {len(self._joint_names)}"
+                )
+            rest = list(self._ik_rest)
+            for name, local_idx in self._actuated_name_to_idx.items():
+                joint_idx = self._joint_name_to_index.get(name, None)
+                if joint_idx is None:
+                    continue
+                rest[joint_idx] = float(rest_arr[local_idx])
+
+        try:
+            q_full = p.calculateInverseKinematics(
+                self._robot_id,
+                self._ee_link_index,
+                targetPosition=tp.tolist(),
+                targetOrientation=tq.tolist(),
+                lowerLimits=self._ik_lower,
+                upperLimits=self._ik_upper,
+                jointRanges=self._ik_ranges,
+                restPoses=rest,
+                maxNumIterations=int(max_iters),
+                residualThreshold=float(residual_threshold),
+                physicsClientId=self._client_id,
+            )
+        except Exception:
+            return None
+
+        if q_full is None:
+            return None
+
+        if len(q_full) <= max(self._actuated_indices, default=-1):
+            return None
+
+        q_act = np.array([q_full[i] for i in self._actuated_indices], dtype=np.float32)
+        return q_act
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -210,6 +288,33 @@ class PyBulletKinematics:
         
         self._logger.warning(f"EE link '{name}' not found. Using fallback {fallback}")
         return fallback
+
+    def _init_ik_bounds(self) -> None:
+        """Initialize IK joint limits and rest poses for PyBullet."""
+        if self._joint_limits is None:
+            self._joint_limits = np.tile(
+                np.array([[-np.pi, np.pi]], dtype=float),
+                (len(self._joint_names), 1),
+            )
+
+        self._ik_lower: List[float] = [0.0] * self._num_joints
+        self._ik_upper: List[float] = [0.0] * self._num_joints
+        self._ik_ranges: List[float] = [0.0] * self._num_joints
+        self._ik_rest: List[float] = [0.0] * self._num_joints
+
+        for j in range(self._num_joints):
+            info = p.getJointInfo(self._robot_id, j, physicsClientId=self._client_id)
+            j_name = info[1].decode("utf-8")
+            if j_name in self._actuated_name_to_idx:
+                idx = self._actuated_name_to_idx[j_name]
+                low, up = self._joint_limits[idx]
+                if not np.isfinite(low) or not np.isfinite(up) or up <= low:
+                    low, up = -np.pi, np.pi
+                rng = max(float(up - low), 1e-6)
+                self._ik_lower[j] = float(low)
+                self._ik_upper[j] = float(up)
+                self._ik_ranges[j] = float(rng)
+                self._ik_rest[j] = float(0.5 * (low + up))
 
     def __del__(self) -> None:
         try:
@@ -337,5 +442,29 @@ class SpecKinematics:
                 J[:3, idx] = z_w
         return J
 
-def create_kinematics_backend(urdf_path, joint_names, base_link, end_effector_link, logger):
-    return PyBulletKinematics(urdf_path, joint_names, base_link, end_effector_link, logger)
+    def ik_pose(
+        self,
+        target_pos: np.ndarray,
+        target_quat: np.ndarray,
+        rest_pose: Optional[np.ndarray] = None,
+        max_iters: int = 100,
+        residual_threshold: float = 1e-5,
+    ) -> Optional[np.ndarray]:
+        raise NotImplementedError("[SpecKinematics] IK is not implemented.")
+
+def create_kinematics_backend(
+    urdf_path,
+    joint_names,
+    joint_limits,
+    base_link,
+    end_effector_link,
+    logger,
+):
+    return PyBulletKinematics(
+        urdf_path,
+        joint_names,
+        joint_limits,
+        base_link,
+        end_effector_link,
+        logger,
+    )

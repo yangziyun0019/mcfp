@@ -10,7 +10,7 @@ data:
   # Morphology JSON path (Ensure this directory exists)
   json_root: "/home/user/mcfp/data/morph_specs/open_manipulator"
 
-  capability_root: "data/capability/morph_specs/open_manipulator/open_manipulator_base"
+  capability_root: "data/capability/morph_specs/open_manipulator/open_manipulator_v0010"
 
 sim:
   base_link: "link1"

@@ -1,5 +1,3 @@
-# mcfp/data/sampling.py
-
 from __future__ import annotations
 
 import random
@@ -7,102 +5,25 @@ from dataclasses import dataclass
 from typing import Dict, Iterator, List, Tuple
 
 import numpy as np
-import torch
 from torch.utils.data import Sampler
 
-from mcfp.data.io import load_capability_map
+from mcfp.data.io import load_pose_samples
 
 
 @dataclass(frozen=True)
 class BalancedSamplingConfig:
-    """Sampling configuration for mixing ws/non-ws cells."""
+    """Sampling configuration for mixing reachable/non-reachable poses."""
+
     ws_ratio: float = 0.8
     seed: int = 42
     batch_size: int = 256
 
 
-class BalancedCellSampler(Sampler[int]):
-    """Index sampler that enforces a target ws/non-ws ratio.
+class GroupedBalancedPoseBatchSampler(Sampler[List[int]]):
+    """Grouped batch sampler with target g_ws ratio.
 
-    This sampler operates on Stage1Dataset's flattened index space.
-    It precomputes ws_mask per (variant_id, cell_idx) by reading g_ws from maps.
-
-    Notes
-    -----
-    - This sampler is designed for Stage I: regression losses are masked by ws_mask,
-      but g_ws head benefits from a stable stream of negative samples.
-    """
-
-    def __init__(
-        self,
-        dataset,
-        cfg: BalancedSamplingConfig,
-        repo_root,
-        manifest_by_id: Dict[str, Dict],
-    ) -> None:
-        self.dataset = dataset
-        self.cfg = cfg
-        self.repo_root = repo_root
-        self.manifest_by_id = manifest_by_id
-
-        self._ws_indices: List[int] = []
-        self._non_ws_indices: List[int] = []
-        self._build_pools()
-
-    def _build_pools(self) -> None:
-        gws_cache: Dict[str, np.ndarray] = {}
-
-        for global_idx, (vid, cell_idx) in enumerate(self.dataset._index):
-            if vid not in gws_cache:
-                cap_path = (self.repo_root / self.manifest_by_id[vid]["cap_path"]).resolve()
-                cap = load_capability_map(cap_path)
-                gws_cache[vid] = np.asarray(cap["g_ws"], dtype=np.float32).reshape(-1)
-
-            ws = float(gws_cache[vid][cell_idx]) > 0.5
-            if ws:
-                self._ws_indices.append(global_idx)
-            else:
-                self._non_ws_indices.append(global_idx)
-
-    def __iter__(self) -> Iterator[int]:
-        rng = random.Random(self.cfg.seed)
-
-        ws = list(self._ws_indices)
-        non_ws = list(self._non_ws_indices)
-
-        rng.shuffle(ws)
-        rng.shuffle(non_ws)
-
-        i_ws = 0
-        i_nw = 0
-
-        while True:
-            pick_ws = rng.random() < self.cfg.ws_ratio
-            if pick_ws and len(ws) > 0:
-                yield ws[i_ws]
-                i_ws = (i_ws + 1) % len(ws)
-            elif len(non_ws) > 0:
-                yield non_ws[i_nw]
-                i_nw = (i_nw + 1) % len(non_ws)
-            else:
-                if len(ws) > 0:
-                    yield ws[i_ws]
-                    i_ws = (i_ws + 1) % len(ws)
-
-    def __len__(self) -> int:
-        return len(self.dataset)
-
-
-class GroupedBalancedBatchSampler(Sampler[List[int]]):
-    """Batch sampler that yields same-morphology (grouped) batches with ws/non-ws mixing.
-
-    Each yielded batch is a list of global indices, all belonging to the same variant_id.
-
-    Why this matters
-    ----------------
-    - Enables caching morphology encoding once per batch (single morph_spec).
-    - Stabilizes cross-morph generalization by learning a conditional mapping under fixed morph.
-    - Still provides negative g_ws examples via ws/non-ws mixture.
+    Each batch contains samples from a single variant_id (morphology).
+    It balances reachable (g_ws=1) and non-reachable (g_ws=0) samples.
     """
 
     def __init__(
@@ -122,45 +43,43 @@ class GroupedBalancedBatchSampler(Sampler[List[int]]):
 
         self.variant_ids: List[str] = list(getattr(self.dataset, "variant_ids", []))
         if len(self.variant_ids) == 0:
-            # Fallback: infer from dataset index.
             self.variant_ids = sorted(list({vid for vid, _ in self.dataset._index}))
+        if len(self.variant_ids) == 0:
+            raise ValueError("[sampling] Empty variant_ids. Check your split file and manifest.")
 
-        # Pools per variant: vid -> (ws_indices, non_ws_indices)
-        self._pools: Dict[str, Tuple[List[int], List[int]]] = {}
-        self._build_pools()
-
-        # Weights for variant sampling (proportional to num_cells when available).
-        self._variant_weights: List[float] = []
+        sample_counts: Dict[str, int] = {vid: 0 for vid in self.variant_ids}
+        for vid, _ in getattr(self.dataset, "_index", []):
+            if vid in sample_counts:
+                sample_counts[vid] += 1
+        self._variant_weights = []
         for vid in self.variant_ids:
-            rec = self.manifest_by_id.get(vid, {})
-            w = float(rec.get("num_cells", 1.0))
+            w = float(sample_counts.get(vid, 0))
             if not np.isfinite(w) or w <= 0.0:
                 w = 1.0
             self._variant_weights.append(w)
 
-        # Pointers per variant to cycle through pools.
+        self._pools: Dict[str, Tuple[List[int], List[int]]] = {}
         self._ptr_ws: Dict[str, int] = {vid: 0 for vid in self.variant_ids}
         self._ptr_nw: Dict[str, int] = {vid: 0 for vid in self.variant_ids}
+        self._build_pools()
 
     def _build_pools(self) -> None:
-        gws_cache: Dict[str, np.ndarray] = {}
-
+        label_cache: Dict[str, np.ndarray] = {}
         ws_pool: Dict[str, List[int]] = {vid: [] for vid in self.variant_ids}
         nw_pool: Dict[str, List[int]] = {vid: [] for vid in self.variant_ids}
 
-        for global_idx, (vid, cell_idx) in enumerate(self.dataset._index):
-            if vid not in gws_cache:
-                cap_path = (self.repo_root / self.manifest_by_id[vid]["cap_path"]).resolve()
-                cap = load_capability_map(cap_path)
-                gws_cache[vid] = np.asarray(cap["g_ws"], dtype=np.float32).reshape(-1)
+        for global_idx, (vid, sample_idx) in enumerate(self.dataset._index):
+            if vid not in label_cache:
+                pose_path = (self.repo_root / self.manifest_by_id[vid]["pose_path"]).resolve()
+                data = load_pose_samples(pose_path)
+                label_cache[vid] = np.asarray(data["labels"], dtype=np.float32).reshape(-1)
 
-            ws = float(gws_cache[vid][cell_idx]) > 0.5
-            if ws:
+            g_ws = float(label_cache[vid][sample_idx])
+            if g_ws > 0.5:
                 ws_pool[vid].append(global_idx)
             else:
                 nw_pool[vid].append(global_idx)
 
-        # Shuffle pools deterministically.
         rng = random.Random(self.cfg.seed)
         for vid in self.variant_ids:
             a = ws_pool.get(vid, [])
@@ -173,7 +92,6 @@ class GroupedBalancedBatchSampler(Sampler[List[int]]):
         rng = random.Random(self.cfg.seed)
 
         while True:
-            # Weighted choice by num_cells to approximate global cell distribution.
             if len(self.variant_ids) == 1:
                 vid = self.variant_ids[0]
             else:
@@ -192,7 +110,6 @@ class GroupedBalancedBatchSampler(Sampler[List[int]]):
                     batch.append(nw[i])
                     self._ptr_nw[vid] += 1
                 else:
-                    # Degenerate fallback: if one pool is empty, draw from the other.
                     if len(ws) > 0:
                         i = self._ptr_ws[vid] % len(ws)
                         batch.append(ws[i])
@@ -201,5 +118,4 @@ class GroupedBalancedBatchSampler(Sampler[List[int]]):
             yield batch
 
     def __len__(self) -> int:
-        # Define one "epoch" as iterating over the flattened dataset once (approx).
         return max(1, len(self.dataset) // max(1, self.cfg.batch_size))

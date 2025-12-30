@@ -7,15 +7,12 @@ data:
   train_split_path: "D:/code/mcfp/data/splits/stage1_train.txt"
   label_keys:
     - g_ws
-    - g_red
-    - g_margin
-    - g_self
-    - g_selfpass
-    - g_lim
-    - g_rot
-    - g_man
-    - g_iso
-    - g_sigma
+    - delta_pos_x
+    - delta_pos_y
+    - delta_pos_z
+    - delta_rot_x
+    - delta_rot_y
+    - delta_rot_z
   percentiles: [1, 5, 50, 95, 99]
 
 output:

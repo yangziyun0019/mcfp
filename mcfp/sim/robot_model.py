@@ -88,6 +88,7 @@ class RobotModel:
             self._kin_backend: KinematicsBackend = create_kinematics_backend(
                 urdf_path=self.urdf_path,
                 joint_names=self._joint_names,
+                joint_limits=self.joint_limits,
                 base_link=self.base_link,
                 end_effector_link=self.end_effector_link,
                 logger=self.logger,
@@ -167,7 +168,13 @@ class RobotModel:
     # Geometry Estimation API (The Robust "Fat Robot" Fix)
     # ------------------------------------------------------------------
 
-    def get_link_radii(self) -> Dict[str, float]:
+    def get_link_radii(
+        self,
+        radius_min: Optional[float] = None,
+        radius_max: Optional[float] = None,
+        radius_default: Optional[float] = None,
+        radius_scale: Optional[float] = None,
+    ) -> Dict[str, float]:
         """
         Estimate collision radius for each link robustly.
         
@@ -175,7 +182,19 @@ class RobotModel:
         In URDF Mode: Parses XML to estimate radii (Legacy logic).
         """
         if self._spec is not None:
-            return self._link_radii.copy()
+            radii = self._link_radii.copy()
+            if radius_scale is not None:
+                for k in radii:
+                    radii[k] *= float(radius_scale)
+            if radius_min is not None or radius_max is not None:
+                for k in radii:
+                    r = radii[k]
+                    if radius_min is not None:
+                        r = max(float(radius_min), r)
+                    if radius_max is not None:
+                        r = min(float(radius_max), r)
+                    radii[k] = r
+            return radii
         
         radii = {}
         
@@ -192,7 +211,14 @@ class RobotModel:
         # 2. Defaults
         MIN_RADIUS = 0.005  # 0.5cm - minimum physical thickness
         MAX_RADIUS = 0.002  # 3cm - max reasonable thickness for arm links
-        DEFAULT_RADIUS = 0.03 # 3cm - safe fallback
+        DEFAULT_RADIUS = 0.03  # 3cm - safe fallback
+
+        if radius_min is not None:
+            MIN_RADIUS = float(radius_min)
+        if radius_max is not None:
+            MAX_RADIUS = float(radius_max)
+        if radius_default is not None:
+            DEFAULT_RADIUS = float(radius_default)
 
         for link in root.findall(".//link"):
             name = link.attrib.get("name")
@@ -281,7 +307,9 @@ class RobotModel:
             
             radii[name] = radius
 
-        RADIUS_SCALE = 1 
+        RADIUS_SCALE = 1.0
+        if radius_scale is not None:
+            RADIUS_SCALE = float(radius_scale)
         for k in radii:
             radii[k] *= RADIUS_SCALE
 
@@ -364,6 +392,26 @@ class RobotModel:
             )
 
         return self._kin_backend.jacobian(q_arr)
+
+    def ik(
+        self,
+        target_pos: np.ndarray,
+        target_quat: np.ndarray,
+        rest_pose: Optional[np.ndarray] = None,
+        max_iters: int = 100,
+        residual_threshold: float = 1e-5,
+    ) -> Optional[np.ndarray]:
+        """Compute IK for the end-effector pose."""
+        if self._kin_backend is None:
+            self.logger.warning("[RobotModel.ik] No kinematics backend available.")
+            return None
+        return self._kin_backend.ik_pose(
+            target_pos=target_pos,
+            target_quat=target_quat,
+            rest_pose=rest_pose,
+            max_iters=max_iters,
+            residual_threshold=residual_threshold,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers (Parsing)

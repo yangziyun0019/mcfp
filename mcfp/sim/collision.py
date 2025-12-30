@@ -10,6 +10,15 @@ import numpy as np
 from mcfp.sim.robot_model import RobotModel
 
 
+def _get_cfg_val(cfg: Optional[object], key: str, default: Optional[float]) -> Optional[float]:
+    """Read a scalar value from config (dict or attribute)."""
+    if cfg is None:
+        return default
+    if isinstance(cfg, dict):
+        return cfg.get(key, default)
+    return getattr(cfg, key, default)
+
+
 class SelfCollisionChecker:
     """Self-collision checker for a single robot model.
 
@@ -24,6 +33,10 @@ class SelfCollisionChecker:
         robot: RobotModel,
         pairs: List[Tuple[str, str]],
         logger,
+        radius_min: Optional[float] = None,
+        radius_max: Optional[float] = None,
+        radius_default: Optional[float] = None,
+        radius_scale: Optional[float] = None,
     ) -> None:
         """
         Parameters
@@ -45,7 +58,12 @@ class SelfCollisionChecker:
         self._link_edges: List[Tuple[str, str]] = list(robot.link_edges)
         
         # Pre-fetch link radii for capsule approximation
-        self._link_radii: Dict[str, float] = robot.get_link_radii()
+        self._link_radii: Dict[str, float] = robot.get_link_radii(
+            radius_min=radius_min,
+            radius_max=radius_max,
+            radius_default=radius_default,
+            radius_scale=radius_scale,
+        )
 
         # Ignored Pairs (Blacklist) - Populated by auto-calibration
         self._ignore_pairs: set[Tuple[str, str]] = set()
@@ -67,6 +85,7 @@ class SelfCollisionChecker:
         robot: RobotModel,
         cache_dir: Path,
         logger,
+        radius_cfg: Optional[object] = None,
     ) -> "SelfCollisionChecker":
         """Create a SelfCollisionChecker for the given robot.
 
@@ -88,7 +107,20 @@ class SelfCollisionChecker:
             )
             pairs = []
 
-        return cls(robot=robot, pairs=pairs, logger=logger)
+        radius_min = _get_cfg_val(radius_cfg, "radius_min", None)
+        radius_max = _get_cfg_val(radius_cfg, "radius_max", None)
+        radius_default = _get_cfg_val(radius_cfg, "radius_default", None)
+        radius_scale = _get_cfg_val(radius_cfg, "radius_scale", None)
+
+        return cls(
+            robot=robot,
+            pairs=pairs,
+            logger=logger,
+            radius_min=radius_min,
+            radius_max=radius_max,
+            radius_default=radius_default,
+            radius_scale=radius_scale,
+        )
 
     @staticmethod
     def _load_pairs(json_path: Path, logger) -> List[Tuple[str, str]]:

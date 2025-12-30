@@ -20,7 +20,7 @@ def main() -> None:
     file and then calls the plotting routine multiple times with different
     scalar fields, so that each indicator can be inspected separately.
     """
-    cfg = load_config("configs/data_gen_single_wx200.yaml")
+    cfg = load_config("configs/data_gen_single_franka.yaml")
 
     urdf_root = Path(cfg.data.urdf_root)
     capability_root = Path(cfg.data.capability_root)

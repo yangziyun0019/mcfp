@@ -26,7 +26,7 @@ class Stage1Metrics:
 
     Metrics:
       - For g_ws: accuracy, precision, recall, f1 (threshold 0.5).
-      - For continuous heads: MAE, RMSE (masked by g_ws=1).
+      - For continuous heads: MAE, RMSE (masked by delta_mask or g_ws=1 fallback).
 
     Notes:
       - For g_ws, predictions can be logits or probabilities. If logits are provided,
@@ -37,11 +37,15 @@ class Stage1Metrics:
         self,
         ws_name: str = "g_ws",
         ws_is_logit: bool = True,
+        reg_mask_key: str = "delta_mask",
+        reg_mask_by_key: bool = True,
         mask_by_ws: bool = True,
         eps: float = 1e-8,
     ) -> None:
         self.ws_name = str(ws_name)
         self.ws_is_logit = bool(ws_is_logit)
+        self.reg_mask_key = str(reg_mask_key)
+        self.reg_mask_by_key = bool(reg_mask_by_key)
         self.mask_by_ws = bool(mask_by_ws)
         self.eps = float(eps)
         self.reset()
@@ -62,7 +66,12 @@ class Stage1Metrics:
         self._sum_w: Dict[str, float] = {}
 
     @torch.no_grad()
-    def update(self, preds: Dict[str, torch.Tensor], labels: Dict[str, Any]) -> None:
+    def update(
+        self,
+        preds: Dict[str, torch.Tensor],
+        labels: Dict[str, Any],
+        batch: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Update accumulators from a batch."""
         if self.ws_name not in labels:
             raise KeyError(f"[metrics] labels must include '{self.ws_name}'.")
@@ -93,8 +102,12 @@ class Stage1Metrics:
         self._ws_fn += fn
 
         # Mask for regression heads
-        if self.mask_by_ws:
-            mask = (ws_true > 0.5).to(dtype=torch.float32)  # [B]
+        mask = None
+        if self.reg_mask_by_key and batch is not None and self.reg_mask_key in batch:
+            reg_mask = _as_float_tensor(batch[self.reg_mask_key], device=device).view(-1)
+            mask = (reg_mask > 0.5).to(dtype=torch.float32)
+        elif self.mask_by_ws:
+            mask = (ws_true > 0.5).to(dtype=torch.float32)
         else:
             mask = torch.ones_like(ws_true, dtype=torch.float32)
 
