@@ -1,0 +1,73 @@
+paths:
+  repo_root: .
+  run_dir: runs/sdf_stage1/exp001
+
+logging:
+  log_dir: logs
+
+run:
+  seed: 42
+  device: cpu
+  deterministic: true
+  max_steps: 10000
+  log_interval: 50
+  val_interval: 500
+  val_batches: 10
+  save_interval: 1000
+  metrics_file: metrics.csv
+
+data:
+  batch_size: 2048
+  morph_sampling: uniform
+  require_boundary: true
+  datasets:
+    - dataset_root: data/sdf/ur5
+      spec_path: data/morph_specs/ur5/ur5_base.json
+
+  ratios:
+    boundary: 0.70
+    rot_far: 0.20
+    pos_far: 0.05
+    eikonal: 0.05
+
+  eikonal:
+    use_delta_from_meta: true
+    sigma_scale: 0.5
+    sigma: 0.0025
+    cover_ratio: 0.05
+    cover_scale: 1.2
+
+model:
+  morph_encoder:
+    d_model: 128
+    n_layers: 4
+    n_heads: 8
+    d_ff: 512
+    dropout: 0.1
+    out_dim: 128
+
+  pose_encoder:
+    hidden_dims: [128, 128]
+    out_dim: 128
+    fourier_dim: 0
+    fourier_scale: 10.0
+
+  backbone:
+    hidden_dim: 128
+    num_layers: 4
+    out_dim: 128
+    w0_first: 30.0
+    w0: 1.0
+
+loss:
+  margin_nb: null
+  margin_nb_scale: 0.5
+  margin_far: 0.02
+  beta: 0.5
+  gamma: 0.1
+
+optim:
+  lr: 0.0003
+  weight_decay: 0.01
+  grad_clip_norm: 1.0
+  use_amp: true

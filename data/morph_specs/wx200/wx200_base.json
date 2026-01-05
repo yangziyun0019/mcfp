@@ -5,7 +5,7 @@
     "variant_id": "wx200_base",
     "parent_variant_id": null,
     "source": "real",
-    "urdf_path": "D:\\code\\mcfp\\data\\urdf\\interbotix_descriptions\\urdf\\wx200.urdf",
+    "urdf_path": "data/urdf/interbotix_descriptions/urdf/wx200.urdf",
     "dof": 5,
     "base_link": "/base_link",
     "ee_link": "/ee_arm_link"

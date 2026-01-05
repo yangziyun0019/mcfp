@@ -5,7 +5,7 @@
     "variant_id": "rm65_base",
     "parent_variant_id": null,
     "source": "real",
-    "urdf_path": "D:\\code\\mcfp\\data\\urdf\\rm_65_b_description\\urdf\\rm_65_b_description.urdf",
+    "urdf_path": "data/urdf/rm_65_b_description/urdf/rm_65_b_description.urdf",
     "dof": 6,
     "base_link": "base_link",
     "ee_link": "Link6"

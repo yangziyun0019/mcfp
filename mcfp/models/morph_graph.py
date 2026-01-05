@@ -358,3 +358,154 @@ def build_link_graph(
         node_names=node_names,
         meta=meta,
     )
+
+
+def build_joint_feature_graph(
+    spec: Dict[str, Any],
+    *,
+    l_ref: float,
+    device: Optional[torch.device] = None,
+    dtype: torch.dtype = torch.float32,
+    bidirectional: bool = True,
+) -> GraphData:
+    """Build a link-graph with joint-centered node features.
+
+    Node feature layout (per link):
+        [joint_type_onehot(4), joint_axis(3),
+         origin_xyz/L_ref(3), origin_rpy/pi(3),
+         link_length/L_ref(1), limit_center, limit_half_range]
+
+    Base link has zero joint features.
+    """
+    links = _extract_links(spec)
+    n = len(links)
+    chain = spec.get("chain", {})
+    joints = chain.get("joints", [])
+    meta = spec.get("meta", {})
+
+    if l_ref <= 0.0:
+        raise ValueError("[build_joint_feature_graph] l_ref must be positive.")
+
+    name_to_idx = {str(lk.get("name", f"link_{i}")): i for i, lk in enumerate(links)}
+    joint_by_child: Dict[str, Dict[str, Any]] = {}
+    for jt in joints:
+        if not isinstance(jt, dict):
+            continue
+        child = jt.get("child_link", None)
+        if child is None:
+            continue
+        joint_by_child[str(child)] = jt
+
+    type_list = ["revolute", "prismatic", "fixed", "continuous"]
+    node_names: List[str] = []
+    node_feat: List[List[float]] = []
+
+    for i, lk in enumerate(links):
+        name = str(lk.get("name", f"link_{i}"))
+        node_names.append(name)
+
+        jt = joint_by_child.get(name, None)
+        if jt is None:
+            feat = [0.0] * (4 + 3 + 3 + 3 + 1 + 2)
+            node_feat.append(feat)
+            continue
+
+        jtype = str(jt.get("type", "")).lower()
+        type_onehot = [1.0 if jtype == t else 0.0 for t in type_list]
+        axis = jt.get("axis", [0.0, 0.0, 0.0])
+        origin_xyz = jt.get("origin_xyz", [0.0, 0.0, 0.0])
+        origin_rpy = jt.get("origin_rpy", [0.0, 0.0, 0.0])
+
+        origin_xyz = [float(x) / float(l_ref) for x in origin_xyz]
+        origin_rpy = [float(x) / math.pi for x in origin_rpy]
+
+        link_len = _safe_float(lk.get("length_estimate", 0.0), default=0.0) / float(l_ref)
+
+        limit_lower = jt.get("limit_lower", None)
+        limit_upper = jt.get("limit_upper", None)
+        scale = 1.0
+        if jtype in ("revolute", "continuous"):
+            scale = math.pi
+        elif jtype == "prismatic":
+            scale = float(l_ref)
+
+        if limit_lower is None or limit_upper is None:
+            limit_center = 0.0
+            limit_half = 0.0
+        else:
+            ll = _safe_float(limit_lower, default=0.0) / float(scale)
+            uu = _safe_float(limit_upper, default=0.0) / float(scale)
+            limit_center = 0.5 * (ll + uu)
+            limit_half = 0.5 * (uu - ll)
+
+        feat = (
+            type_onehot
+            + [float(x) for x in axis]
+            + [float(x) for x in origin_xyz]
+            + [float(x) for x in origin_rpy]
+            + [float(link_len)]
+            + [float(limit_center), float(limit_half)]
+        )
+        node_feat.append(feat)
+
+    x = torch.tensor(node_feat, dtype=dtype, device=device)
+
+    edges = spec.get("graph", {}).get("edges", None)
+    src_list: List[int] = []
+    dst_list: List[int] = []
+    if isinstance(edges, list) and len(edges) > 0:
+        for e in edges:
+            if not isinstance(e, (list, tuple)) or len(e) != 2:
+                continue
+            u, v = int(e[0]), int(e[1])
+            if u < 0 or v < 0 or u >= n or v >= n:
+                continue
+            src_list.append(u)
+            dst_list.append(v)
+            if bidirectional:
+                src_list.append(v)
+                dst_list.append(u)
+    else:
+        for jt in joints:
+            if not isinstance(jt, dict):
+                continue
+            p = jt.get("parent_link", None)
+            c = jt.get("child_link", None)
+            if p is None or c is None:
+                continue
+            p = str(p)
+            c = str(c)
+            if p not in name_to_idx or c not in name_to_idx:
+                continue
+            u = name_to_idx[p]
+            v = name_to_idx[c]
+            src_list.append(u)
+            dst_list.append(v)
+            if bidirectional:
+                src_list.append(v)
+                dst_list.append(u)
+
+    if len(src_list) == 0:
+        edge_index = torch.empty((2, 0), dtype=torch.long, device=device)
+    else:
+        edge_index = torch.tensor([src_list, dst_list], dtype=torch.long, device=device)
+
+    meta = {
+        "family": meta.get("family", None),
+        "variant_id": meta.get("variant_id", None),
+        "num_links": n,
+        "bidirectional": bidirectional,
+        "node_feat_dim": int(x.shape[1]),
+        "num_edges": int(edge_index.shape[1]),
+    }
+
+    batch = torch.zeros((n,), dtype=torch.long, device=device)
+
+    return GraphData(
+        x=x,
+        edge_index=edge_index,
+        edge_attr=None,
+        batch=batch,
+        node_names=node_names,
+        meta=meta,
+    )

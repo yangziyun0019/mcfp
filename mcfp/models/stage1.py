@@ -1,179 +1,84 @@
-# mcfp/models/stage1.py
-
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+from typing import Optional
 
 import torch
-import torch.nn as nn
+from torch import nn
 
+from mcfp.models.backbone import FiLMSirenBackbone
+from mcfp.models.heads import ScalarHead
+from mcfp.models.morph_encoder import MorphologyEncoder, build_morph_graph_from_json
+from mcfp.models.morph_graph import GraphData
 from mcfp.models.pose_encoder import PoseEncoder
-from mcfp.models.backbone import TokenFusionBackbone
-from mcfp.models.heads import MultiIndicatorHeads
-
-
-def _get(cfg: Any, key: str, default: Any = None) -> Any:
-    """Small helper to read config from dict-like or OmegaConf-like objects."""
-    if cfg is None:
-        return default
-    if isinstance(cfg, dict):
-        return cfg.get(key, default)
-    return getattr(cfg, key, default)
-
-
-@dataclass
-class Stage1Output:
-    """Container for Stage-1 outputs."""
-    preds: Dict[str, torch.Tensor]  # name -> [B]
-    z: torch.Tensor                # [B, D]
-
-
-def _infer_pose_key(batch: Dict[str, Any]) -> str:
-    """Infer the pose feature key from a batch dict."""
-    for k in ["pose_feats", "pose", "x", "query_feats", "query"]:
-        if k in batch:
-            return k
-    raise KeyError("[MCFPStage1] Cannot find pose features in batch.")
-
-
-def _infer_graph_key(batch: Dict[str, Any]) -> str:
-    """Infer the morphology graph key from a batch dict."""
-    for k in ["morph_graph", "graph", "morph"]:
-        if k in batch:
-            return k
-    raise KeyError("[MCFPStage1] Cannot find morphology graph in batch.")
-
-
-def _ensure_node_batch_for_grouped(
-    h_links: torch.Tensor,
-    pose_batch_size: int,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Expand link embeddings for grouped batches (one morph per batch).
-
-    Given:
-      - h_links: (N, D) link embeddings for a single morphology
-      - pose_batch_size: B
-
-    Return:
-      - node_emb: (B*N, D) expanded embeddings
-      - node_batch: (B*N,) each node assigned to sample index [0..B-1]
-
-    This makes TokenFusionBackbone treat each sample as an independent "graph"
-    with the same node token set (valid for grouped sampling).
-    """
-    if h_links.ndim != 2:
-        raise ValueError("[MCFPStage1] h_links must be (N, D).")
-    N, D = h_links.shape
-    B = int(pose_batch_size)
-
-    if B <= 0:
-        raise ValueError("[MCFPStage1] pose_batch_size must be positive.")
-
-    if B == 1:
-        node_emb = h_links
-        node_batch = torch.zeros((N,), dtype=torch.long, device=h_links.device)
-        return node_emb, node_batch
-
-    # Expand: (N,D) -> (B,N,D) -> (B*N,D)
-    node_emb = h_links.unsqueeze(0).expand(B, N, D).reshape(B * N, D)
-
-    # Build node_batch: [0..0, 1..1, ..., B-1..B-1], each repeated N times
-    node_batch = torch.arange(B, device=h_links.device, dtype=torch.long).repeat_interleave(N)
-
-    return node_emb, node_batch
 
 
 class MCFPStage1(nn.Module):
-    """Stage-1 MCFP model: (morphology graph, query pose) -> multi-indicator predictions.
-
-    Assumptions for Stage-1 (grouped sampling):
-      - A batch contains query points from the SAME morphology.
-      - The morphology graph is provided once per batch.
-      - Morph encoder returns (h_links, z_morph), where h_links is (N_links, D).
-    """
+    """Stage-1 implicit field model."""
 
     def __init__(
         self,
-        morph_encoder: nn.Module,
-        pose_encoder: PoseEncoder,
-        backbone: TokenFusionBackbone,
-        heads: MultiIndicatorHeads,
+        node_feat_dim: int,
+        morph_dim: int = 128,
+        pose_dim: int = 128,
+        pose_hidden_dims: Optional[list[int]] = None,
+        pose_fourier_dim: int = 0,
+        pose_fourier_scale: float = 10.0,
+        d_model: int = 128,
+        n_layers: int = 4,
+        n_heads: int = 8,
+        d_ff: int = 512,
+        dropout: float = 0.1,
+        backbone_hidden_dim: int = 128,
+        backbone_num_layers: int = 4,
+        backbone_out_dim: int = 128,
+        w0_first: float = 30.0,
+        w0: float = 1.0,
     ) -> None:
         super().__init__()
-        self.morph_encoder = morph_encoder
-        self.pose_encoder = pose_encoder
-        self.backbone = backbone
-        self.heads = heads
-
-    @classmethod
-    def from_cfg(cls, cfg: Any, morph_encoder: nn.Module) -> "MCFPStage1":
-        """Build Stage-1 model from config and an already-constructed morph encoder."""
-        pose_enc = PoseEncoder.from_cfg(_get(cfg, "pose_encoder", None))
-        backbone = TokenFusionBackbone.from_cfg(_get(cfg, "backbone", None))
-
-        heads_cfg = _get(cfg, "heads", None)
-        if heads_cfg is None:
-            raise ValueError("[MCFPStage1] Missing cfg.heads for MultiIndicatorHeads.")
-        heads = MultiIndicatorHeads.from_cfg(in_dim=backbone.d_model, cfg=heads_cfg)
-
-        return cls(
-            morph_encoder=morph_encoder,
-            pose_encoder=pose_enc,
-            backbone=backbone,
-            heads=heads,
+        self.morph_encoder = MorphologyEncoder(
+            node_feat_dim=node_feat_dim,
+            d_model=d_model,
+            n_layers=n_layers,
+            n_heads=n_heads,
+            d_ff=d_ff,
+            dropout=dropout,
+            out_dim=morph_dim,
         )
-
-    def forward(self, batch: Dict[str, Any]) -> Stage1Output:
-        """
-        Args:
-            batch: Dict containing at least:
-              - pose_feats: [B, pose_dim]
-              - morph_graph: graph object expected by morph_encoder
-
-        Returns:
-            Stage1Output with preds dict and fused latent z: [B, D].
-        """
-        pose_key = _infer_pose_key(batch)
-        graph_key = _infer_graph_key(batch)
-
-        pose_feats = batch[pose_key]
-        graph = batch[graph_key]
-
-        if not isinstance(pose_feats, torch.Tensor):
-            raise TypeError("[MCFPStage1] pose_feats must be a torch.Tensor.")
-
-        B = int(pose_feats.shape[0])
-
-        pose_out = self.pose_encoder(pose_feats)
-
-        # Morph encoder must return (h_links, z_morph) at minimum.
-        morph_out = self.morph_encoder(graph)
-        if not isinstance(morph_out, (tuple, list)) or len(morph_out) < 1:
-            raise TypeError("[MCFPStage1] morph_encoder must return a tuple/list (h_links, z_morph).")
-
-        h_links = morph_out[0]  # (N_links, D)
-        if h_links.ndim != 2:
-            raise ValueError("[MCFPStage1] morph_encoder first output must be (N_links, D).")
-
-        z_morph = morph_out[1] if len(morph_out) > 1 else None
-        if z_morph is not None:
-            if z_morph.ndim != 2:
-                raise ValueError("[MCFPStage1] z_morph must be (B, D) or (1, D).")
-            if z_morph.shape[0] == 1 and B > 1:
-                z_morph = z_morph.expand(B, -1)
-            elif z_morph.shape[0] not in (1, B):
-                raise ValueError("[MCFPStage1] z_morph batch dim must be 1 or B.")
-
-        # Grouped sampling: expand link tokens for each sample in batch.
-        node_emb, node_batch = _ensure_node_batch_for_grouped(h_links, pose_batch_size=B)
-
-        fused = self.backbone(
-            pose_token=pose_out.pose_emb,
-            node_emb=node_emb,
-            node_batch=node_batch,
-            morph_token=z_morph,
+        self.pose_encoder = PoseEncoder(
+            in_dim=6,
+            hidden_dims=pose_hidden_dims,
+            out_dim=pose_dim,
+            fourier_dim=pose_fourier_dim,
+            fourier_scale=pose_fourier_scale,
         )
+        self.backbone = FiLMSirenBackbone(
+            in_dim=pose_dim,
+            morph_dim=morph_dim,
+            hidden_dim=backbone_hidden_dim,
+            num_layers=backbone_num_layers,
+            out_dim=backbone_out_dim,
+            w0_first=w0_first,
+            w0=w0,
+        )
+        self.head = ScalarHead(backbone_out_dim)
 
-        head_out = self.heads(fused.z)
-        return Stage1Output(preds=head_out.preds, z=fused.z)
+    def encode_morph(self, spec_path: str, l_ref: float, device: Optional[torch.device] = None) -> torch.Tensor:
+        """Encode morphology from spec JSON."""
+        graph = build_morph_graph_from_json(spec_path, l_ref=l_ref, device=device)
+        return self.morph_encoder(graph)
+
+    def forward(
+        self,
+        w: torch.Tensor,
+        *,
+        morph_graph: Optional[GraphData] = None,
+        morph_emb: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Forward pass for s(x)."""
+        if morph_emb is None:
+            if morph_graph is None:
+                raise ValueError("morph_graph or morph_emb must be provided.")
+            morph_emb = self.morph_encoder(morph_graph)
+        h = self.pose_encoder(w)
+        feat = self.backbone(h, morph_emb)
+        return self.head(feat)

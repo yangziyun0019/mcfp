@@ -5,7 +5,7 @@
     "variant_id": "open_manipulator_base",
     "parent_variant_id": null,
     "source": "real",
-    "urdf_path": "D:\\code\\mcfp\\data\\urdf\\open_manipulator_description\\urdf\\open_manipulator.urdf",
+    "urdf_path": "data/urdf/open_manipulator_description/urdf/open_manipulator.urdf",
     "dof": 4,
     "base_link": "link1",
     "ee_link": "end_effector_link"

@@ -5,7 +5,7 @@
     "variant_id": "franka_base",
     "parent_variant_id": null,
     "source": "real",
-    "urdf_path": "D:\\code\\mcfp\\data\\urdf\\franka_emika_panda\\urdf\\panda_arm.urdf",
+    "urdf_path": "data/urdf/franka_emika_panda/urdf/panda_arm.urdf",
     "dof": 7,
     "base_link": "panda_link0",
     "ee_link": "panda_link7"

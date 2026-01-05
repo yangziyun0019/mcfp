@@ -2,271 +2,329 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
+
+import json
+import math
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset
 
-from mcfp.data.io import load_morph_spec, load_pose_samples
-from mcfp.data.pose_features import compute_morph_meta, compute_pose_features, normalize_delta
+from mcfp.utils import se3
 
 
 @dataclass(frozen=True)
-class PoseFeatureConfig:
-    """Configuration for pose feature construction.
-
-    Attributes
-    ----------
-    primary_pos:
-        Name of the primary position feature used for Fourier encoding.
-        One of: "aabb_ratio", "aabb_centered", "morph_scale", "raw".
-    include_aabb_ratio:
-        Append normalized ratio (pos - min) / (max - min).
-    include_aabb_centered:
-        Append centered ratio in [-1, 1].
-    include_morph_scale:
-        Append position normalized by morphology scale L_r.
-    include_raw_pos:
-        Append raw XYZ position.
-    include_quat:
-        Append quaternion [x, y, z, w] as-is.
-    quat_normalize:
-        If True, normalize quaternion to unit length before appending.
-    eps:
-        Small epsilon for numerical stability.
-    """
-
-    primary_pos: str = "aabb_centered"
-    include_aabb_ratio: bool = True
-    include_aabb_centered: bool = True
-    include_morph_scale: bool = True
-    include_raw_pos: bool = False
-    include_quat: bool = True
-    quat_normalize: bool = False
-    eps: float = 1e-8
+class BatchRatios:
+    """Sampling ratios for each sample group."""
+    boundary: float
+    rot_far: float
+    pos_far: float
+    eikonal: float
 
 
-@dataclass(frozen=True)
-class DeltaFeatureConfig:
-    """Configuration for delta normalization.
-
-    Attributes
-    ----------
-    pos_norm:
-        Position delta normalization mode: "none", "aabb", or "morph_scale".
-    rot_norm:
-        Rotation delta normalization mode: "none" or "pi".
-    eps:
-        Small epsilon for numerical stability.
-    """
-
-    pos_norm: str = "aabb"
-    rot_norm: str = "pi"
-    eps: float = 1e-8
+def _load_meta(path: Path) -> Dict[str, Any]:
+    """Load meta.json from a dataset root."""
+    path = Path(path)
+    meta_path = path / "meta.json"
+    if not meta_path.is_file():
+        raise FileNotFoundError(f"meta.json not found: {meta_path}")
+    with meta_path.open("r", encoding="utf-8") as f:
+        return json.load(f)
 
 
+def _load_npz(path: Path) -> Dict[str, np.ndarray]:
+    """Load arrays from a NPZ file."""
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"NPZ not found: {path}")
+    with np.load(path) as data:
+        return {k: data[k] for k in data.files}
 
 
-class PoseDeltaDataset(Dataset):
-    """Dataset for (morphology, pose) -> reachability + delta targets.
+def _split_counts(total: int, parts: int) -> List[int]:
+    """Split total into near-equal parts."""
+    if parts <= 0:
+        return []
+    base = int(total // parts)
+    rem = int(total % parts)
+    out = [base + (1 if i < rem else 0) for i in range(parts)]
+    return out
 
-    Each sample returns:
-      - pose_feats: Tensor[F]
-      - labels: Tensor[K] aligned with label_keys
-      - delta_mask: float Tensor scalar (1 for valid delta targets)
-      - ws_mask: float Tensor scalar (1 if g_ws>0.5)
-      - morph_spec: dict
-      - variant_id/family/dof: metadata
-    """
+
+def _choice_indices(rng: np.random.Generator, n_total: int, n: int) -> np.ndarray:
+    """Sample indices with replacement if needed."""
+    n_total = int(n_total)
+    n = int(n)
+    if n_total <= 0:
+        return np.zeros((0,), dtype=np.int64)
+    replace = n > n_total
+    return rng.choice(n_total, size=n, replace=replace).astype(np.int64)
+
+
+def _sample_uniform_quaternion(rng: np.random.Generator) -> np.ndarray:
+    """Sample a uniform quaternion (x, y, z, w)."""
+    u1, u2, u3 = rng.random(3)
+    s1 = math.sqrt(1.0 - u1)
+    s2 = math.sqrt(u1)
+    theta1 = 2.0 * math.pi * u2
+    theta2 = 2.0 * math.pi * u3
+    qx = s1 * math.sin(theta1)
+    qy = s1 * math.cos(theta1)
+    qz = s2 * math.sin(theta2)
+    qw = s2 * math.cos(theta2)
+    return np.array([qx, qy, qz, qw], dtype=np.float32)
+
+
+def _quat_to_rotvec(q: np.ndarray) -> np.ndarray:
+    """Convert quaternion to axis-angle vector."""
+    axis, angle = se3.quat_to_axis_angle(q)
+    return (axis * float(angle)).astype(np.float32)
+
+
+def _to_w(z: np.ndarray, lambda_val: float) -> np.ndarray:
+    """Convert z=[p/L_ref, xi] to w=[p/L_ref, xi/lambda]."""
+    z = np.asarray(z, dtype=np.float32)
+    if z.ndim != 2 or z.shape[1] != 6:
+        raise ValueError(f"z must be (N,6). Got {z.shape}.")
+    w = np.zeros_like(z, dtype=np.float32)
+    w[:, :3] = z[:, :3]
+    w[:, 3:] = z[:, 3:] / float(lambda_val)
+    return w
+
+
+class SDFDataset:
+    """Container for one morphology's SDF samples."""
 
     def __init__(
         self,
-        repo_root: Path,
-        manifest_records: List[Dict[str, Any]],
-        variant_ids: List[str],
-        label_keys: List[str],
-        pose_cfg: PoseFeatureConfig,
-        delta_cfg: DeltaFeatureConfig,
-        sample_indices_by_variant: Optional[Dict[str, List[int]]] = None,
-        cache_pose: bool = True,
-        cache_specs: bool = True,
+        root: Path | str,
+        *,
+        require_boundary: bool = True,
     ) -> None:
-        self.repo_root = Path(repo_root).resolve()
-        self.records_by_id = {str(r["variant_id"]): r for r in manifest_records}
-        self.variant_ids = [str(v) for v in variant_ids]
-        self.label_keys = [str(k) for k in label_keys]
-        self.pose_cfg = pose_cfg
-        self.delta_cfg = delta_cfg
-        self.sample_indices_by_variant = sample_indices_by_variant
-        self.cache_pose = bool(cache_pose)
-        self.cache_specs = bool(cache_specs)
+        self.root = Path(root)
+        self.meta = _load_meta(self.root)
 
-        if len(self.label_keys) == 0:
-            raise ValueError("[PoseDeltaDataset] label_keys is empty.")
-        if "g_ws" not in self.label_keys:
-            raise ValueError("[PoseDeltaDataset] label_keys must include 'g_ws'.")
-        valid_keys = {
-            "g_ws",
-            "delta_pos_x",
-            "delta_pos_y",
-            "delta_pos_z",
-            "delta_rot_x",
-            "delta_rot_y",
-            "delta_rot_z",
-        }
-        unknown = [k for k in self.label_keys if k not in valid_keys]
-        if unknown:
-            raise ValueError(f"[PoseDeltaDataset] Unknown label_keys: {unknown}")
+        if "l_ref" not in self.meta or "lambda" not in self.meta:
+            raise ValueError("[SDFDataset] meta.json must contain l_ref and lambda.")
 
-        self._pose_cache: Dict[str, Dict[str, np.ndarray]] = {}
-        self._spec_cache: Dict[str, Dict[str, Any]] = {}
-        self._aabb_cache: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
-        self._scale_cache: Dict[str, float] = {}
+        self.l_ref = float(self.meta["l_ref"])
+        self.lambda_val = float(self.meta["lambda"])
+        self.delta = float(self.meta.get("delta", 0.0))
 
-        self._index: List[Tuple[str, int]] = []
-        self._build_index()
-        if len(self._index) == 0:
-            raise ValueError("[PoseDeltaDataset] Empty dataset. Check splits or sample indices.")
+        aabb_min = self.meta.get("aabb_min", None)
+        aabb_max = self.meta.get("aabb_max", None)
+        self.aabb_min = np.asarray(aabb_min, dtype=np.float32) if aabb_min is not None else None
+        self.aabb_max = np.asarray(aabb_max, dtype=np.float32) if aabb_max is not None else None
 
-    def _build_index(self) -> None:
-        self._index.clear()
-        for vid in self.variant_ids:
-            rec = self.records_by_id.get(vid, None)
-            if rec is None:
-                raise KeyError(f"[PoseDeltaDataset] Missing record for variant_id={vid}")
-            if self.sample_indices_by_variant is not None and vid in self.sample_indices_by_variant:
-                indices = self.sample_indices_by_variant[vid]
-                for i in indices:
-                    self._index.append((vid, int(i)))
-                continue
-            n = int(rec.get("num_samples", -1))
-            if n <= 0:
-                pose = self._load_pose(vid)
-                n = int(pose["poses"].shape[0])
-            for i in range(n):
-                self._index.append((vid, i))
+        boundary = _load_npz(self.root / "boundary_samples.npz")
+        rot_far = _load_npz(self.root / "rot_far_samples.npz")
+        pos_far = _load_npz(self.root / "pos_far_samples.npz")
 
-    def __len__(self) -> int:
-        return len(self._index)
+        if "z" not in boundary or "y" not in boundary:
+            raise ValueError("[SDFDataset] boundary_samples.npz must include z and y.")
+        if "z" not in rot_far:
+            raise ValueError("[SDFDataset] rot_far_samples.npz must include z.")
+        if "z" not in pos_far:
+            raise ValueError("[SDFDataset] pos_far_samples.npz must include z.")
 
-    def _load_pose(self, vid: str) -> Dict[str, np.ndarray]:
-        if self.cache_pose and vid in self._pose_cache:
-            return self._pose_cache[vid]
-        rec = self.records_by_id[vid]
-        pose_path = (self.repo_root / rec["pose_path"]).resolve()
-        data = load_pose_samples(pose_path)
-        required = ["poses", "labels", "delta_pos", "delta_rot", "delta_mask"]
-        missing = [k for k in required if k not in data]
-        if missing:
-            raise ValueError(f"[PoseDeltaDataset] Missing keys {missing} in {pose_path}")
-        poses = np.asarray(data["poses"], dtype=np.float32)
-        labels = np.asarray(data["labels"], dtype=np.float32).reshape(-1)
-        delta_pos = np.asarray(data["delta_pos"], dtype=np.float32)
-        delta_rot = np.asarray(data["delta_rot"], dtype=np.float32)
-        delta_mask = np.asarray(data["delta_mask"], dtype=np.float32).reshape(-1)
-        n = int(poses.shape[0]) if poses.ndim == 2 else -1
-        if poses.ndim != 2 or poses.shape[1] != 7:
-            raise ValueError(f"[PoseDeltaDataset] poses must be (N,7), got {poses.shape} in {pose_path}")
-        if labels.shape[0] != n:
-            raise ValueError(f"[PoseDeltaDataset] labels length mismatch in {pose_path}")
-        if delta_pos.shape != (n, 3):
-            raise ValueError(f"[PoseDeltaDataset] delta_pos shape mismatch in {pose_path}")
-        if delta_rot.shape != (n, 3):
-            raise ValueError(f"[PoseDeltaDataset] delta_rot shape mismatch in {pose_path}")
-        if delta_mask.shape[0] != n:
-            raise ValueError(f"[PoseDeltaDataset] delta_mask length mismatch in {pose_path}")
-        if self.cache_pose:
-            self._pose_cache[vid] = data
-        return data
+        z_nb = boundary["z"]
+        y_nb = boundary["y"].astype(np.float32).reshape(-1)
 
-    def _load_spec(self, vid: str) -> Dict[str, Any]:
-        if self.cache_specs and vid in self._spec_cache:
-            return self._spec_cache[vid]
-        rec = self.records_by_id[vid]
-        spec_path = (self.repo_root / rec["spec_path"]).resolve()
-        spec = load_morph_spec(spec_path)
-        if self.cache_specs:
-            self._spec_cache[vid] = spec
-        return spec
+        w_nb = _to_w(z_nb, self.lambda_val)
+        tol = 1e-6
+        idx_b = np.isclose(y_nb, 0.0, atol=tol)
+        idx_in = y_nb > 0.0
+        idx_out = y_nb < 0.0
 
-    def _get_scale(self, vid: str, spec: Dict[str, Any]) -> float:
-        if vid in self._scale_cache:
-            return self._scale_cache[vid]
-        Lr, _, _ = compute_morph_meta(spec)
-        self._scale_cache[vid] = float(Lr)
-        return float(Lr)
+        self.w_b = w_nb[idx_b]
+        self.w_in = w_nb[idx_in]
+        self.w_out = w_nb[idx_out]
 
-    def _get_aabb(self, vid: str, spec: Dict[str, Any], Lr: float) -> Tuple[np.ndarray, np.ndarray]:
-        if vid in self._aabb_cache:
-            return self._aabb_cache[vid]
-        _, aabb_min, aabb_max = compute_morph_meta(spec)
-        self._aabb_cache[vid] = (aabb_min, aabb_max)
-        return aabb_min, aabb_max
+        if require_boundary and self.w_b.shape[0] == 0:
+            raise ValueError("[SDFDataset] No boundary points (y==0).")
 
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
-        vid, sample_idx = self._index[idx]
-        rec = self.records_by_id[vid]
+        self.w_rot_far = _to_w(rot_far["z"], self.lambda_val)
+        self.w_pos_far = _to_w(pos_far["z"], self.lambda_val)
 
-        pose_data = self._load_pose(vid)
-        spec = self._load_spec(vid)
-
-        poses = np.asarray(pose_data["poses"], dtype=np.float32)
-        labels = np.asarray(pose_data["labels"], dtype=np.float32).reshape(-1)
-        delta_pos = np.asarray(pose_data["delta_pos"], dtype=np.float32)
-        delta_rot = np.asarray(pose_data["delta_rot"], dtype=np.float32)
-        delta_mask = np.asarray(pose_data["delta_mask"], dtype=np.float32).reshape(-1)
-
-        if sample_idx < 0 or sample_idx >= poses.shape[0]:
-            raise IndexError("[PoseDeltaDataset] sample_idx out of range.")
-
-        pose = poses[sample_idx]
-        g_ws = float(labels[sample_idx])
-        dp = delta_pos[sample_idx]
-        dr = delta_rot[sample_idx]
-        dmask = float(delta_mask[sample_idx])
-
-        Lr = self._get_scale(vid, spec)
-        aabb_min, aabb_max = self._get_aabb(vid, spec, Lr)
-
-        pose_feats = compute_pose_features(
-            pose=pose,
-            pose_cfg=self.pose_cfg,
-            aabb_min=aabb_min,
-            aabb_max=aabb_max,
-            morph_scale=Lr,
-        )
-
-        dp_norm, dr_norm = normalize_delta(
-            delta_pos=dp,
-            delta_rot=dr,
-            delta_cfg=self.delta_cfg,
-            aabb_min=aabb_min,
-            aabb_max=aabb_max,
-            morph_scale=Lr,
-        )
-
-        label_map = {
-            "g_ws": g_ws,
-            "delta_pos_x": float(dp_norm[0]),
-            "delta_pos_y": float(dp_norm[1]),
-            "delta_pos_z": float(dp_norm[2]),
-            "delta_rot_x": float(dr_norm[0]),
-            "delta_rot_y": float(dr_norm[1]),
-            "delta_rot_z": float(dr_norm[2]),
+    def sample_boundary(
+        self,
+        n_total: int,
+        rng: np.random.Generator,
+    ) -> Dict[str, np.ndarray]:
+        """Sample boundary neighborhood points."""
+        n_total = int(n_total)
+        n_in, n_out, n_b = _split_counts(n_total, 3)
+        idx_in = _choice_indices(rng, self.w_in.shape[0], n_in)
+        idx_out = _choice_indices(rng, self.w_out.shape[0], n_out)
+        idx_b = _choice_indices(rng, self.w_b.shape[0], n_b)
+        return {
+            "w_in": self.w_in[idx_in],
+            "w_out": self.w_out[idx_out],
+            "w_b": self.w_b[idx_b],
         }
 
-        y = np.asarray([label_map[k] for k in self.label_keys], dtype=np.float32)
+    def sample_far(
+        self,
+        n_rot_far: int,
+        n_pos_far: int,
+        rng: np.random.Generator,
+    ) -> Dict[str, np.ndarray]:
+        """Sample far negative points."""
+        n_rot_far = int(n_rot_far)
+        n_pos_far = int(n_pos_far)
+        idx_rot = _choice_indices(rng, self.w_rot_far.shape[0], n_rot_far)
+        idx_pos = _choice_indices(rng, self.w_pos_far.shape[0], n_pos_far)
+        return {
+            "w_rot_far": self.w_rot_far[idx_rot],
+            "w_pos_far": self.w_pos_far[idx_pos],
+        }
 
-        ws_mask = 1.0 if g_ws > 0.5 else 0.0
+    def sample_eikonal(
+        self,
+        w_ref: np.ndarray,
+        n_jitter: int,
+        n_cover: int,
+        rng: np.random.Generator,
+        *,
+        sigma: float,
+        cover_scale: float = 1.2,
+    ) -> np.ndarray:
+        """Sample eikonal points from jittered boundary and AABB coverage."""
+        w_ref = np.asarray(w_ref, dtype=np.float32)
+        if w_ref.ndim != 2 or w_ref.shape[1] != 6:
+            raise ValueError(f"w_ref must be (N,6). Got {w_ref.shape}.")
+
+        n_jitter = int(n_jitter)
+        n_cover = int(n_cover)
+
+        jitter = np.zeros((0, 6), dtype=np.float32)
+        if n_jitter > 0 and w_ref.shape[0] > 0:
+            idx = _choice_indices(rng, w_ref.shape[0], n_jitter)
+            noise = rng.normal(scale=float(sigma), size=(n_jitter, 6)).astype(np.float32)
+            jitter = w_ref[idx] + noise
+
+        cover = np.zeros((0, 6), dtype=np.float32)
+        if n_cover > 0:
+            if self.aabb_min is None or self.aabb_max is None:
+                raise ValueError("[SDFDataset] AABB bounds required for coverage sampling.")
+            center = 0.5 * (self.aabb_min + self.aabb_max)
+            half = 0.5 * (self.aabb_max - self.aabb_min) * float(cover_scale)
+            pos = rng.uniform(center - half, center + half, size=(n_cover, 3)).astype(np.float32)
+            rotvec = np.zeros((n_cover, 3), dtype=np.float32)
+            for i in range(n_cover):
+                q = _sample_uniform_quaternion(rng)
+                rotvec[i] = _quat_to_rotvec(q)
+            w_pos = pos / float(self.l_ref)
+            w_rot = rotvec / float(self.lambda_val)
+            cover = np.concatenate([w_pos, w_rot], axis=1).astype(np.float32)
+
+        if jitter.shape[0] == 0:
+            return cover
+        if cover.shape[0] == 0:
+            return jitter
+        return np.concatenate([jitter, cover], axis=0)
+
+
+@dataclass(frozen=True)
+class MorphDatasetEntry:
+    """Dataset entry binding a morphology spec to a dataset root."""
+    dataset_root: Path
+    spec_path: Path
+
+
+class MultiMorphSDFDataset:
+    """Multi-morph dataset wrapper with fixed-ratio batch sampling."""
+
+    def __init__(
+        self,
+        entries: List[MorphDatasetEntry],
+        *,
+        require_boundary: bool = True,
+    ) -> None:
+        if not entries:
+            raise ValueError("[MultiMorphSDFDataset] entries must be non-empty.")
+        self.entries = list(entries)
+        self.datasets = [
+            SDFDataset(e.dataset_root, require_boundary=require_boundary)
+            for e in self.entries
+        ]
+
+    def sample_batch(
+        self,
+        batch_size: int,
+        ratios: BatchRatios,
+        rng: np.random.Generator,
+        *,
+        eikonal_sigma: Optional[float] = None,
+        eikonal_sigma_scale: float = 0.5,
+        eikonal_cover_ratio: float = 0.05,
+        cover_scale: float = 1.2,
+        morph_sampling: str = "uniform",
+    ) -> Dict[str, Any]:
+        """Sample a mixed batch from one morphology."""
+        batch_size = int(batch_size)
+        if batch_size <= 0:
+            raise ValueError("[MultiMorphSDFDataset] batch_size must be positive.")
+
+        weights = None
+        if morph_sampling == "proportional":
+            sizes = np.array([ds.w_b.shape[0] for ds in self.datasets], dtype=np.float64)
+            sizes = np.where(sizes > 0, sizes, 1.0)
+            weights = sizes / float(np.sum(sizes))
+
+        morph_id = int(rng.choice(len(self.datasets), p=weights))
+        ds = self.datasets[morph_id]
+        entry = self.entries[morph_id]
+
+        raw_counts = np.array(
+            [
+                ratios.boundary,
+                ratios.rot_far,
+                ratios.pos_far,
+                ratios.eikonal,
+            ],
+            dtype=np.float64,
+        )
+        raw_counts = np.clip(raw_counts, 0.0, None)
+        if float(np.sum(raw_counts)) <= 0.0:
+            raise ValueError("[MultiMorphSDFDataset] ratios sum to zero.")
+        raw_counts = raw_counts / float(np.sum(raw_counts))
+        counts = np.round(raw_counts * float(batch_size)).astype(int).tolist()
+        diff = batch_size - int(sum(counts))
+        if diff != 0:
+            counts[0] += diff
+
+        n_boundary, n_rot_far, n_pos_far, n_eik = counts
+        boundary = ds.sample_boundary(n_boundary, rng=rng)
+        far = ds.sample_far(n_rot_far, n_pos_far, rng=rng)
+
+        w_ref = np.concatenate([boundary["w_b"], boundary["w_in"], boundary["w_out"]], axis=0)
+        n_cover = int(round(float(n_eik) * float(eikonal_cover_ratio)))
+        n_jitter = max(0, int(n_eik) - n_cover)
+        sigma = eikonal_sigma
+        if sigma is None:
+            sigma = float(ds.delta) * float(eikonal_sigma_scale)
+        w_eik = ds.sample_eikonal(
+            w_ref=w_ref,
+            n_jitter=n_jitter,
+            n_cover=n_cover,
+            rng=rng,
+            sigma=float(sigma),
+            cover_scale=float(cover_scale),
+        )
 
         return {
-            "variant_id": vid,
-            "family": rec.get("family", None),
-            "dof": int(rec.get("dof", -1)),
-            "pose_feats": torch.from_numpy(pose_feats),
-            "labels": torch.from_numpy(y),
-            "ws_mask": torch.tensor(ws_mask, dtype=torch.float32),
-            "delta_mask": torch.tensor(dmask, dtype=torch.float32),
-            "morph_spec": spec,
+            "morph_id": morph_id,
+            "spec_path": str(entry.spec_path),
+            "w_b": torch.from_numpy(boundary["w_b"]),
+            "w_in": torch.from_numpy(boundary["w_in"]),
+            "w_out": torch.from_numpy(boundary["w_out"]),
+            "w_rot_far": torch.from_numpy(far["w_rot_far"]),
+            "w_pos_far": torch.from_numpy(far["w_pos_far"]),
+            "w_eik": torch.from_numpy(w_eik),
+            "meta": {
+                "l_ref": ds.l_ref,
+                "lambda": ds.lambda_val,
+                "delta": ds.delta,
+            },
         }

@@ -5,7 +5,7 @@
     "variant_id": "ur5_base",
     "parent_variant_id": null,
     "source": "real",
-    "urdf_path": "D:\\code\\mcfp\\data\\urdf\\ur_description\\urdf\\ur5.urdf",
+    "urdf_path": "data/urdf/ur_description/urdf/ur5.urdf",
     "dof": 6,
     "base_link": "base_link",
     "ee_link": "wrist_3_link"

@@ -1,4 +1,0 @@
-franka_base
-open_manipulator_base
-rm65_base
-ur5_base

@@ -15,7 +15,16 @@ venv/
 logs/
 wandb/
 outputs/
+runs/
+memo/
 
 dist/
 build/
 *.egg-info/
+
+data/sdf/
+data/capability/
+data/manifests/
+data/reports/
+data/splits/
+data/stats/

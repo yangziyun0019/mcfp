@@ -521,3 +521,195 @@ class SelfCollisionChecker:
             self._has_printed_debug = True
 
         return final_dist
+
+
+try:
+    import pybullet as p
+    _HAS_PYBULLET = True
+except ImportError:
+    _HAS_PYBULLET = False
+
+
+class MeshSelfCollisionChecker:
+    """Mesh-based self-collision checker using PyBullet.
+
+    Args:
+        urdf_path: Path to URDF file.
+        joint_names: Actuated joint names (order matches q).
+        link_edges: List of (parent, child) link name pairs.
+        logger: Logger instance.
+        use_self_collision: Whether to enable PyBullet self-collision flag.
+    """
+
+    def __init__(
+        self,
+        urdf_path: Path | str,
+        joint_names: List[str],
+        link_edges: List[Tuple[str, str]],
+        logger,
+        use_self_collision: bool = True,
+    ) -> None:
+        if not _HAS_PYBULLET:
+            raise ImportError("pybullet is required for MeshSelfCollisionChecker")
+
+        self.urdf_path = Path(urdf_path).resolve()
+        self.joint_names = list(joint_names)
+        self.logger = logger
+
+        if not self.urdf_path.is_file():
+            raise FileNotFoundError(f"URDF not found: {self.urdf_path}")
+
+        self._client_id = p.connect(p.DIRECT)
+        self._set_search_path()
+
+        flags = p.URDF_USE_SELF_COLLISION if use_self_collision else 0
+        self._robot_id = p.loadURDF(
+            str(self.urdf_path),
+            useFixedBase=True,
+            flags=flags,
+            physicsClientId=self._client_id,
+        )
+
+        self._link_name_to_index: Dict[str, int] = {}
+        self._joint_name_to_index: Dict[str, int] = {}
+
+        body_info = p.getBodyInfo(self._robot_id, physicsClientId=self._client_id)
+        base_name = body_info[0].decode("utf-8")
+        self._link_name_to_index[base_name] = -1
+
+        num_joints = p.getNumJoints(self._robot_id, physicsClientId=self._client_id)
+        for idx in range(num_joints):
+            info = p.getJointInfo(self._robot_id, idx, physicsClientId=self._client_id)
+            j_name = info[1].decode("utf-8")
+            l_name = info[12].decode("utf-8")
+            self._joint_name_to_index[j_name] = idx
+            self._link_name_to_index[l_name] = idx
+
+        self._actuated_indices: List[int] = []
+        for name in self.joint_names:
+            if name in self._joint_name_to_index:
+                self._actuated_indices.append(self._joint_name_to_index[name])
+            else:
+                self.logger.warning(
+                    f"[MeshSelfCollisionChecker] Joint '{name}' not found in URDF."
+                )
+
+        self._check_pairs = self._build_check_pairs(link_edges)
+        self.logger.info(
+            f"[MeshSelfCollisionChecker] Built {len(self._check_pairs)} link pairs."
+        )
+
+    def _set_search_path(self) -> None:
+        urdf_dir = self.urdf_path.parent
+        candidates = [
+            urdf_dir.parent.parent.parent,
+            urdf_dir.parent.parent,
+            urdf_dir.parent,
+            urdf_dir,
+        ]
+        search_path = None
+        for cand in candidates:
+            if cand is not None and cand.is_dir():
+                search_path = cand
+                break
+        if search_path is None:
+            search_path = urdf_dir
+        p.setAdditionalSearchPath(str(search_path), physicsClientId=self._client_id)
+
+    def _build_check_pairs(self, link_edges: List[Tuple[str, str]]) -> List[Tuple[int, int]]:
+        adjacent = set()
+        for parent, child in link_edges:
+            if parent in self._link_name_to_index and child in self._link_name_to_index:
+                a = self._link_name_to_index[parent]
+                b = self._link_name_to_index[child]
+                key = (min(a, b), max(a, b))
+                adjacent.add(key)
+
+        link_indices = sorted(set(self._link_name_to_index.values()))
+        pairs: List[Tuple[int, int]] = []
+        for i in range(len(link_indices)):
+            for j in range(i + 1, len(link_indices)):
+                a = link_indices[i]
+                b = link_indices[j]
+                key = (min(a, b), max(a, b))
+                if key in adjacent:
+                    continue
+                pairs.append((a, b))
+        return pairs
+
+    def _set_joint_states(self, q: np.ndarray) -> None:
+        q_arr = np.asarray(q, dtype=float).reshape(-1)
+        if q_arr.shape[0] != len(self._actuated_indices):
+            raise ValueError(
+                f"[MeshSelfCollisionChecker] q dim {q_arr.shape[0]} != {len(self._actuated_indices)}"
+            )
+        for idx, val in zip(self._actuated_indices, q_arr):
+            p.resetJointState(self._robot_id, idx, float(val), physicsClientId=self._client_id)
+
+    def has_collision(self, q: np.ndarray) -> bool:
+        """Return True if any mesh collision is detected."""
+        self._set_joint_states(q)
+        p.performCollisionDetection(physicsClientId=self._client_id)
+        for a, b in self._check_pairs:
+            pts = p.getClosestPoints(
+                bodyA=self._robot_id,
+                bodyB=self._robot_id,
+                distance=0.0,
+                linkIndexA=int(a),
+                linkIndexB=int(b),
+                physicsClientId=self._client_id,
+            )
+            if pts:
+                return True
+        return False
+
+    def __del__(self) -> None:
+        try:
+            if hasattr(self, "_client_id"):
+                p.disconnect(self._client_id)
+        except Exception:
+            pass
+
+
+class HybridSelfCollisionChecker:
+    """Hybrid collision checker combining capsule and mesh tests.
+
+    Modes:
+      - "capsule_only": use capsule approximation only.
+      - "mesh_only": use mesh collision only.
+      - "hybrid": use capsule clearance as a filter, then mesh if clearance <= d_check.
+    """
+
+    def __init__(
+        self,
+        capsule_checker: SelfCollisionChecker,
+        mesh_checker: Optional[MeshSelfCollisionChecker],
+        d_check: float,
+        mode: str = "hybrid",
+    ) -> None:
+        self.capsule_checker = capsule_checker
+        self.mesh_checker = mesh_checker
+        self.d_check = float(max(d_check, 0.0))
+        self.mode = str(mode).lower()
+        if self.mode in ("hybrid", "mesh_only") and self.mesh_checker is None:
+            raise ValueError("HybridSelfCollisionChecker requires mesh_checker for this mode.")
+
+    def is_collision_free(self, q: np.ndarray) -> bool:
+        """Return True if configuration is collision-free."""
+        if self.mode == "capsule_only":
+            dist = self.capsule_checker.min_distance(q)
+            return bool(np.isfinite(dist) and dist > 0.0)
+
+        if self.mode == "mesh_only":
+            return bool(not self.mesh_checker.has_collision(q))
+
+        dist = self.capsule_checker.min_distance(q)
+        if not np.isfinite(dist):
+            return False
+        if dist > self.d_check:
+            return True
+        return bool(not self.mesh_checker.has_collision(q))
+
+    def min_distance(self, q: np.ndarray) -> float:
+        """Return capsule clearance for debug/analysis."""
+        return float(self.capsule_checker.min_distance(q))

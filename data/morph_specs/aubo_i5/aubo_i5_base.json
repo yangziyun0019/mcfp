@@ -5,7 +5,7 @@
     "variant_id": "aubo_i5_base",
     "parent_variant_id": null,
     "source": "real",
-    "urdf_path": "D:\\code\\mcfp\\data\\urdf\\aubo_description\\urdf\\aubo_i5.urdf",
+    "urdf_path": "data/urdf/aubo_description/urdf/aubo_i5.urdf",
     "dof": 6,
     "base_link": "base_link",
     "ee_link": "wrist3_Link"

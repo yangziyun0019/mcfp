@@ -1,4 +1,0 @@
-{"family": "franka", "variant_id": "franka_base", "dof": 7, "spec_path": "data/morph_specs/franka/franka_base.json", "pose_path": "data/pose_samples/franka/pose_samples_with_deltas.npz", "num_samples": 2000000}
-{"family": "open_manipulator", "variant_id": "open_manipulator_base", "dof": 4, "spec_path": "data/morph_specs/open_manipulator/open_manipulator_base.json", "pose_path": "data/pose_samples/open_manipulator/pose_samples_with_deltas.npz", "num_samples": 2000000}
-{"family": "rm65", "variant_id": "rm65_base", "dof": 6, "spec_path": "data/morph_specs/rm65/rm65_base.json", "pose_path": "data/pose_samples/rm65/pose_samples_with_deltas.npz", "num_samples": 2000000}
-{"family": "ur5", "variant_id": "ur5_base", "dof": 6, "spec_path": "data/morph_specs/ur5/ur5_base.json", "pose_path": "data/pose_samples/ur5/pose_samples_with_deltas.npz", "num_samples": 2000000}
