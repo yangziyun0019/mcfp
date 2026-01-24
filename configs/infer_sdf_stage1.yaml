@@ -1,0 +1,35 @@
+paths:
+  repo_root: .
+  checkpoint: runs/sdf_stage1/exp001/checkpoint_final.pt
+  dataset_root: data/sdf/ur5
+  spec_path: data/morph_specs/ur5/ur5_base.json
+
+run:
+  device: cpu
+  log_level: error
+  quiet_init: true
+
+
+pose:
+  position_m: [1.5,-0.5 ,0.1]
+  euler_deg: [34.0,1.4 , 144.6]
+  euler_order: xyz
+
+ik:
+  seeds: 16
+  max_iters: 150
+  residual_threshold: 1.0e-5
+  seed: 42
+
+verify:
+  pos_tol_mm: 3.0
+  rot_tol_deg: 1.0
+
+adjust:
+  enabled: true
+  step_size: 1.0
+  max_steps: 50
+  stop_on_positive: true
+  target_abs_s: 0.0
+  normalize_grad: true
+  grad_clip: 0.0

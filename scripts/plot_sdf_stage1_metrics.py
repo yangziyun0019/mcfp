@@ -41,6 +41,12 @@ def main() -> int:
         help="Path to metrics.csv",
     )
     parser.add_argument(
+        "--out",
+        type=str,
+        default="",
+        help="Output PNG path (default: metrics.png next to metrics.csv).",
+    )
+    parser.add_argument(
         "--interval",
         type=float,
         default=1.0,
@@ -55,13 +61,19 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
+        import matplotlib
+        matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
         print("matplotlib is required for plotting. Install it with conda or pip.")
         return 1
 
     metrics_path = Path(args.metrics).expanduser()
-    plt.ion()
+    if args.out:
+        out_path = Path(args.out).expanduser()
+    else:
+        out_path = metrics_path.with_suffix(".png")
+
     fig, ax = plt.subplots(figsize=(8, 4.5))
     (train_line,) = ax.plot([], [], label="train", color="#1f77b4")
     (val_line,) = ax.plot([], [], label="val", color="#ff7f0e")
@@ -72,7 +84,18 @@ def main() -> int:
     ax.legend()
 
     try:
+        last_mtime = None
         while True:
+            if metrics_path.is_file():
+                mtime = metrics_path.stat().st_mtime
+            else:
+                mtime = None
+
+            if mtime is not None and mtime == last_mtime:
+                time.sleep(args.interval)
+                continue
+            last_mtime = mtime
+
             data = _read_metrics(metrics_path)
             train = _tail_series(data["train"], args.tail)
             val = _tail_series(data["val"], args.tail)
@@ -91,9 +114,10 @@ def main() -> int:
 
             ax.relim()
             ax.autoscale_view()
-            fig.canvas.draw()
-            fig.canvas.flush_events()
-            plt.pause(args.interval)
+            fig.tight_layout()
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(out_path)
+            time.sleep(args.interval)
     except KeyboardInterrupt:
         return 0
 

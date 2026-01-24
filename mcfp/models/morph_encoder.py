@@ -77,7 +77,8 @@ class GraphTransformerLayer(nn.Module):
         v = v.permute(1, 0, 2)
 
         scores = torch.einsum("hnd,hmd->hnm", q, k) / math.sqrt(self.d_head)
-        scores = scores.masked_fill(~adj_mask.unsqueeze(0), -1e9)
+        mask_value = torch.finfo(scores.dtype).min
+        scores = scores.masked_fill(~adj_mask.unsqueeze(0), mask_value)
         attn = torch.softmax(scores, dim=-1)
         attn = self.dropout(attn)
 
