@@ -1,3 +1,8 @@
+"""Configure console and file loggers for MCFP scripts.
+
+This module standardizes runtime logging for data preparation, training, and inference commands.
+"""
+
 from __future__ import annotations
 
 import logging

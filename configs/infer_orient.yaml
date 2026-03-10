@@ -1,0 +1,75 @@
+# MCFP config: Orientation-SDF inference.
+# Purpose: Defines dataset paths, checkpoint paths, query settings, and visualization options for scripts.infer_orient.
+# Entry point: python -m scripts.infer_orient --config configs/infer_orient.yaml
+
+paths:
+  repo_root: .
+  orientation_h5: data/aubo_i5_3mm/orientation.h5
+  morphology_spec: data/aubo_i5_3mm/meta/morphology_spec.h5
+  orient_checkpoint: runs/orient_sdf/exp001/checkpoint_final.pt
+  # for boundary visualization
+  position_h5: data/aubo_i5_3mm/dataset_pos.h5
+
+run:
+  device: cpu
+
+input:
+  # choose one: anchor_id or anchor_pos
+  anchor_id: 555
+  # anchor_pos: [0.0, 0.0, 0.0]
+  # Euler angles in degrees
+  euler_deg: [180, 180, 270]
+  # order string: xyz / zyx / etc.
+  euler_order: xyz
+  # intrinsic (body-fixed) or extrinsic (space-fixed)
+  euler_intrinsic: true
+
+infer:
+  # temperature for MoE log-sum-exp
+  tau: 0.05
+  # target phi_raw (rad). >0 means push to positive margin.
+  target_phi_raw: 0.1
+  # stop threshold (rad). 0 means stop once reachable.
+  stop_phi_raw: 0.0
+  # step mode: target (toward target_phi_raw) or zero (toward 0, stop at target)
+  step_mode: target
+  max_iters: 100
+  step_scale: 1.0
+  max_step: 2
+  min_step: 0.005
+  eps: 1.0e-8
+  verbose: true
+
+model:
+  position:
+    k_p: 10
+  orientation:
+    k_r: 64
+    context_dim: 128
+    hidden_dim: 256
+    num_layers: 4
+    experts: 4
+  morph:
+    d_model: 256
+    depth_emb_dim: 16
+    num_layers: 6
+    num_heads: 8
+    dropout: 0.1
+
+vis:
+  enabled: true
+  boundary_h5: data/aubo_i5_3mm/dataset_pos.h5
+  boundary_max_points: 50000
+  boundary_seed: 42
+  boundary_alpha: 0.08
+  boundary_size: 2.0
+  axis_length: 0.15
+  axis_width: 2.0
+  dash_segments: 10
+  show_z_arrow: true
+  z_arrow_scale: 1.0
+  color_init: [1.0, 0.0, 0.0]
+  color_mid: [0.7, 0.7, 0.7]
+  color_final: [0.0, 0.8, 0.0]
+  anchor_color: [1.0, 0.0, 0.0]
+  # screenshot: outputs/orient_infer.png

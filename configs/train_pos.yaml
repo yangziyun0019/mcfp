@@ -1,0 +1,90 @@
+# MCFP config: Position-SDF training.
+# Purpose: Defines dataset paths, sampler settings, model hyperparameters, and optimization options for scripts.train_pos.
+# Entry point: python -m scripts.train_pos --config configs/train_pos.yaml
+
+paths:
+  repo_root: .
+  # processed dataset output from prepare_data
+  position_h5: data/aubo_i5_3mm/dataset_pos.h5
+  splits_voxel: data/aubo_i5_3mm/meta/splits_voxel.npy
+  morphology_spec: data/aubo_i5_3mm/meta/morphology_spec.h5
+  run_dir: runs/pos_sdf/exp001
+
+logging:
+  log_dir: logs
+
+run:
+  seed: 42
+  # 当前机器无 CUDA 用 cpu；上服务器改为 cuda
+  device: cpu
+  # 文档 3.4.3：200k steps
+  max_steps: 200000
+  log_interval: 1000
+  # 文档：每 10k steps 验证
+  val_interval: 5000
+  val_batches: 5
+  save_interval: 10000
+  # debug: 固定 batch 过拟合（只跑 2000 step）
+  overfit_batch: false
+  overfit_steps: 2000
+
+data:
+  # 文档 3.4.1：B_p = 8192
+  batch_size: 8192
+  # 文档 6.1.0：boundary / non-boundary
+  ratios: [0.25, 0.75]
+  # 文档 6.1.0：log-|s| 桶权重（tau 越小越偏近边界）
+  s_bucket_tau: 3.0
+  # inside/outside 配比（0.5=均衡）
+  sign_balance: 0.5
+  cache_grid: true
+  # 多进程采样（0 关闭）
+  num_workers: 12
+  # 预取 batch 数
+  prefetch_batches: 12
+
+model:
+  position:
+    # 文档 2.1：K_p = 10
+    k_p: 10
+    # 文档 3.2：FiLM-SIREN 5 层 / 宽 256
+    hidden_dim: 256
+    num_layers: 5
+    w0_first: 30.0
+    w0: 1.0
+  morph:
+    # 文档 2.5：Graph Transformer 6 层 / 8 heads / dim 256
+    d_model: 256
+    depth_emb_dim: 16
+    num_layers: 6
+    num_heads: 8
+    dropout: 0.1
+
+loss:
+  # 文档 3.4.2
+  # 临时：符号优先（用于 debug）
+  sign_weight: 1.5
+  reg_weight: 1.0
+  boundary_weight: 1.0
+  eikonal_weight: 0.05
+  # reg / eik warmup
+  reg_warmup_steps: 20000
+  eikonal_warmup_steps: 20000
+  # Eikonal 等式带宽（体素尺度 k_eq * v）
+  k_eq_start: 1.0
+  k_eq_end: 3.0
+  k_eq_warmup_steps: 80000
+  # 文档 6.1.1：TSDF 截断系数 k_trunc（单位: voxel_size）
+  trunc_k: 100.0
+  # 符号损失权重（outside 更重）
+  sign_weight_pos: 1.0
+  sign_weight_neg: 2.0
+  sign_k_m: 1.5
+  # 分层回归权重（tier: boundary, 1..N_s）
+  reg_weights: [1.0, 1.0, 0.8, 0.6, 0.5, 0.4, 0.3]
+  # 可选：按 b_s 分桶加权符号损失
+  sign_bucket_weights: [1.0, 1.0, 2.0, 3.0, 4.0, 5.0, 8.0]
+
+optim:
+  # 文档 3.4.3
+  lr: 1.0e-4

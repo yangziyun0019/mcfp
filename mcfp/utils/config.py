@@ -1,3 +1,8 @@
+"""Load YAML configuration files into attribute-accessible namespaces.
+
+These helpers keep script configuration parsing compact and consistent across entry points.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

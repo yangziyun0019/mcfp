@@ -1,0 +1,88 @@
+# MCFP config: Joint pose inference.
+# Purpose: Defines the position-and-orientation repair pipeline used by scripts.infer_pose.
+# Entry point: python -m scripts.infer_pose --config configs/infer_pose.yaml
+
+paths:
+  repo_root: .
+  position_h5: data/aubo_i5_3mm/dataset_pos.h5
+  orientation_h5: data/aubo_i5_3mm/orientation.h5
+  morphology_spec: data/aubo_i5_3mm/meta/morphology_spec.h5
+  position_checkpoint: runs/pos_sdf/exp001/checkpoint_final.pt
+  orient_checkpoint: runs/orient_sdf/exp001/checkpoint_final.pt
+
+run:
+  device: cpu
+
+input:
+  # [x, y, z, roll, pitch, yaw], meters + degrees
+  # pose: [2.0, 2.0, 2.0, 90, 0, 0]
+  pose: [0, 0, 0, 180.0, 180.0, 270.0]
+  # pose: [0.2, 0.2, 0.7, 180.0, 180.0, 270.0]
+  euler_order: xyz
+  euler_intrinsic: true
+
+model:
+  position:
+    k_p: 10
+    hidden_dim: 256
+    num_layers: 5
+    w0_first: 30.0
+    w0: 1.0
+  morph:
+    d_model: 256
+    depth_emb_dim: 16
+    num_layers: 6
+    num_heads: 8
+    dropout: 0.1
+
+position_infer:
+  step_scale: 1.0
+  max_step: 0.05
+  min_step: 0.01
+  max_iters: 200
+  tol: 0.0
+  target_s_meter: 0.02
+  backtrack: true
+  backtrack_factor: 0.5
+  backtrack_iters: 10
+  verbose: true
+  eps: 1.0e-8
+  clamp_sphere: true
+  sphere_center: [0.0, 0.0, 0.0]
+  sphere_scale: 1.2
+
+orientation_infer:
+  tau: 0.05
+  target_phi_raw: 0.10
+  stop_phi_raw: 0.0
+  step_mode: target
+  max_iters: 100
+  step_scale: 1.0
+  max_step: 2.0
+  min_step: 0.005
+  eps: 1.0e-8
+  verbose: true
+
+vis:
+  enabled: true
+  boundary_h5: data/aubo_i5_3mm/dataset_pos.h5
+  boundary_max_points: 50000
+  boundary_seed: 42
+  boundary_alpha: 0.15
+  boundary_size: 2.0
+  boundary_surface: true
+  boundary_surface_alpha: 0.05
+  boundary_surface_opacity: 0.12
+  path_point_size: 8.0
+  pos_axis_length: 0.05
+  orient_axis_length: 0.1
+  orient_mid_stride: 5
+  axis_width: 2.0
+  dash_segments: 10
+  show_z_arrow: true
+  z_arrow_scale: 0.5
+  color_reachable: [0.0, 0.8, 0.0]
+  color_unreachable: [1.0, 0.0, 0.0]
+  color_mid: [0.7, 0.7, 0.7]
+  color_path: [1.0, 0.6, 0.0]
+  # screenshot: outputs/pose_infer.png

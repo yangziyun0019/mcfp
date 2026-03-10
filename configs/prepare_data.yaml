@@ -1,0 +1,71 @@
+# MCFP config: Data preparation.
+# Purpose: Defines raw inputs, processed outputs, split settings, and morphology generation options for scripts.prepare_data.
+# Entry point: python -m scripts.prepare_data --config configs/prepare_data.yaml
+
+paths:
+  repo_root: .
+  raw_position_h5: datasets/aubo_i5_3mm/dataset.h5
+  raw_orientation_h5: datasets/aubo_i5_3mm/dataset_orient00.h5
+
+  urdf_path: data/urdf/aubo_description/urdf/aubo_i5.urdf
+  srdf_path: data/urdf/aubo_description/srdf/aubo_robot.srdf
+  mesh_root: data/urdf/aubo_description
+  package_map:
+    aubo_description: data/urdf/aubo_description
+
+  position_out: data/aubo_i5_3mm/dataset_pos.h5
+  orientation_out: data/aubo_i5_3mm/orientation.h5
+  meta_dir: data/aubo_i5_3mm/meta
+  morph_out: data/aubo_i5_3mm/meta/morphology_spec.h5
+
+logging:
+  log_dir: logs
+
+run:
+  prepare_dataset: true
+  prepare_position: false
+  prepare_orientation: true
+  prepare_morphology: false
+
+prepare:
+  # grid chunk size along x for streaming index build (smaller = lower memory)
+  chunk_x: 6
+  # worker processes for pass-2 index build (0 = single process)
+  num_workers: 12
+  orientation:
+    q_ref:
+      k_r: 64
+      pool_size: 4096
+      seed: 42
+      method: sobol
+      use_existing: true
+    bucket_chunk: 200000
+
+robot:
+  name: aubo_i5
+  variant: aubo_i5_3mm
+  base_link: base_link
+  ee_link: wrist3_Link
+
+splits:
+  voxel: [0.9, 0.05, 0.05]
+  voxel_seed: 42
+  anchor: [0.9, 0.05, 0.05]
+  anchor_seed: 42
+
+boundary:
+  star_eps_scale: 1.0e-6
+
+# 训练桶标签（log-|s| 分桶 + AABB 3D 分桶）
+buckets:
+  # 距离桶数量 N_s（log-|s|）
+  num_s: 10
+  # 空间桶分辨率 (N_x, N_y, N_z)
+  spatial_dims: [8, 8, 8]
+  # log 归一化中的 epsilon
+  eps: 1.0e-6
+
+morphology:
+  pointcloud:
+    num_points: 1024
+    seed: 42

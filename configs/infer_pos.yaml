@@ -1,0 +1,81 @@
+# MCFP config: Position-SDF inference.
+# Purpose: Defines dataset paths, checkpoint paths, projection settings, and visualization options for scripts.infer_pos.
+# Entry point: python -m scripts.infer_pos --config configs/infer_pos.yaml
+
+paths:
+  repo_root: .
+  position_h5: data/aubo_i5_3mm/dataset_pos.h5
+  morphology_spec: data/aubo_i5_3mm/meta/morphology_spec.h5
+  position_checkpoint: runs/pos_sdf/checkpoint_final.pt
+
+run:
+  device: cpu
+
+input:
+  # 位置 (m): x y z
+  position: [2, 2, 2]
+
+model:
+  position:
+    k_p: 10
+    hidden_dim: 256
+    num_layers: 6
+    w0_first: 30.0
+    w0: 1.0
+  morph:
+    d_model: 256
+    depth_emb_dim: 16
+    num_layers: 6
+    num_heads: 8
+    dropout: 0.1
+
+infer:
+  # 不可达时沿梯度方向前进的比例
+  step_scale: 1.0
+  # 单次最大步长 (m)，可选
+  max_step: 0.05
+  # 单次最小步长 (m)
+  min_step: 0.01
+  # 最大迭代次数
+  max_iters: 200
+  # 判定可达阈值（sdf_norm >= -tol）
+  tol: 0
+  # 目标 SDF（>0 表示拉到内部一定距离）
+  # 优先使用 target_s_meter；若为 0 则等价于边界
+  target_s_meter: 0.02
+  # 启用回溯以避免震荡
+  backtrack: true
+  backtrack_factor: 0.5
+  backtrack_iters: 10
+  # 打印每次迭代
+  verbose: true
+  eps: 1.0e-8
+  # 推理域球形截断（以机械臂基座为球心）
+  clamp_sphere: true
+  # 球心（机械臂基座坐标）
+  sphere_center: [0.0, 0.0, 0.0]
+  # 半径 = L_ref * sphere_scale
+  sphere_scale: 1.2
+
+field:
+  # 1m 立方体内采样
+  num_points: 100000
+  cube_size: 3
+  cube_center: [0.0, 0.0, 0.0]
+  seed: 42
+  # 若不填写则自动用样本最大值做归一化
+  max_abs: 0.0
+  output_png: runs/pos_sdf/field_sample.png
+
+infer_vis:
+  enabled: true
+  output_png: ""
+  boundary_h5: data/aubo_i5_3mm/dataset_pos.h5
+  boundary_max_points: 5000
+  boundary_alpha: 0.08
+  boundary_size: 2.0
+  boundary_seed: 42
+  # 由点云重建边界面（可能较慢）
+  boundary_surface: true
+  boundary_surface_alpha: 0.05
+  boundary_surface_opacity: 0.15

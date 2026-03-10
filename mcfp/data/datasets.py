@@ -1,3 +1,8 @@
+"""Legacy NPZ-based SDF dataset helpers for early MCFP experiments.
+
+This module is kept for reference and is not part of the current HDF5 training pipeline.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

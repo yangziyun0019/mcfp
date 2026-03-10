@@ -1,0 +1,96 @@
+# MCFP config: Orientation-SDF training.
+# Purpose: Defines dataset paths, sampler settings, model hyperparameters, and optimization options for scripts.train_orient.
+# Entry point: python -m scripts.train_orient --config configs/train_orient.yaml
+
+paths:
+  repo_root: .
+  orientation_h5: data/aubo_i5_3mm/orientation.h5
+  morphology_spec: data/aubo_i5_3mm/meta/morphology_spec.h5
+  # B-2 校准阶段需要的 Position-SDF checkpoint
+  # position_checkpoint: runs/pos_sdf/exp001/checkpoint_final.pt
+  position_checkpoint: null
+  run_dir: runs/orient_sdf/exp001
+
+logging:
+  log_dir: logs
+
+run:
+  seed: 42
+  # 当前机器无 CUDA 用 cpu；上服务器改为 cuda
+  device: cpu
+  # 文档 3.5.5：B-1 50k + B-2 10k
+  steps_b1: 50000
+  steps_b2: 0
+  log_interval: 100
+  # 文档：每 2k steps 验证/保存
+  val_interval: 2000
+  val_batches: 2
+  save_interval: 2000
+
+data:
+  # v9 6.2.1：A=64, K=64
+  anchors_per_step: 64
+  samples_per_anchor: 64
+  ratio_bd: 0.20
+  ratio_sh: 0.40
+  ratio_gl: 0.40
+  # global 采样桶（log-|phi| + 覆盖桶）
+  n_phi: 10
+  tau_phi: 2.5
+  q_min: 8
+  r0: 0.5
+  r1: 0.8
+  phi_min: 0.01
+  # 参考四元数（与数据集分桶共享）
+  use_dataset_q_ref: true
+  # q_ref_path: null  # 可指定 .npy/.npz/.h5，覆盖 dataset 内的 q_ref
+  # q_ref_seed: 20260126
+  # 多进程采样（0 关闭）
+  num_workers: 0
+  # 预取 batch 数
+  prefetch_batches: 4
+
+model:
+  position:
+    # 文档 2.1
+    k_p: 10
+    hidden_dim: 256
+    num_layers: 5
+    w0_first: 30.0
+    w0: 1.0
+  orientation:
+    # 文档 2.2：K_R 默认 64
+    k_r: 64
+    context_dim: 128
+    hidden_dim: 256
+    num_layers: 5
+    experts: 5
+    # 文档 3.3.2：tau 退火 0.2 -> 0.05
+    tau0: 0.2
+    tau1: 0.05
+    tau_steps: 50000
+  morph:
+    d_model: 256
+    depth_emb_dim: 16
+    num_layers: 6
+    num_heads: 8
+    dropout: 0.1
+
+loss:
+  # v9 6.2.3
+  eikonal_weight: 0.1
+  eikonal_warmup_frac: 0.15
+  eikonal_ramp_frac: 0.55
+  phi_eq_start: 0.01
+  phi_eq_end: 0.5
+  sign_weight: 0.5
+  sign_margin: 0.10
+  sign_thr: 0.35
+  weight_boundary: 2.0
+  weight_global: 0.25
+  balance_weight: 0.1
+  entropy_weight: 0.01
+
+optim:
+  # 文档 3.5.5
+  lr: 2.0e-4
