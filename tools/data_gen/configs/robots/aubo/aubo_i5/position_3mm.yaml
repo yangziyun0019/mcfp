@@ -1,0 +1,56 @@
+# Aubo i5 position-dataset profile (3 mm voxel size).
+robot:
+  name: aubo_i5
+  urdf: src/robots/aubo/aubo_description/urdf/aubo_i5.urdf
+  srdf: src/robots/aubo/aubo_moveit_config/config/aubo_robot.srdf
+  group_name: manipulator
+  base_link: base_link
+  ee_link: wrist3_Link
+  joint_names:
+    - shoulder_joint
+    - upperArm_joint
+    - foreArm_joint
+    - wrist1_joint
+    - wrist2_joint
+    - wrist3_joint
+
+sampling:
+  voxel_size: 0.003
+  aabb_scale: 1.5
+  aabb_samples: 20000
+  fk_samples: 500000000
+  fk_max_attempts: 500000000
+  random_seed: 42
+  fk_log_interval: 1000000
+  threads: 12
+  orientation_bins: 64
+  coverage_check_interval: 1000000
+  coverage_mode: heat
+  coverage_delta_ratio: 0.01
+  coverage_patience: 3
+  coverage_min_occupied: 50000
+  coverage_heat_min: 0.0005
+  coverage_heat_alpha: 0.2
+
+ik:
+  attempts: 200
+  timeout: 0.005
+  attempts_refine: 400
+  timeout_refine: 0.01
+  search_discretization: 0.005
+
+sdf:
+  hole_fill_max_voxels: 2000
+  closing_radius_voxels: 1
+
+output:
+  dir: tools/data_gen/outputs/aubo/aubo_i5/voxel_3mm
+  write_fk_samples: true
+  write_voxel_counts: true
+  write_sdf_grid: true
+  write_orientation_coverage: true
+  write_npy: false
+  write_metadata_yaml: false
+  write_hdf5: true
+  hdf5_path: tools/data_gen/outputs/aubo/aubo_i5/voxel_3mm/dataset.h5
+  hdf5_chunk: 200000

@@ -1,0 +1,39 @@
+# Skeleton config for future network validation on Aubo i5.
+
+robot:
+  name: aubo_i5
+  urdf: src/robots/aubo/aubo_description/urdf/aubo_i5.urdf
+  srdf: src/robots/aubo/aubo_moveit_config/config/aubo_robot.srdf
+  group_name: manipulator
+  base_link: base_link
+  ee_link: wrist3_Link
+  joint_names:
+    - shoulder_joint
+    - upperArm_joint
+    - foreArm_joint
+    - wrist1_joint
+    - wrist2_joint
+    - wrist3_joint
+
+reference:
+  position_h5: tools/data_gen/outputs/aubo/aubo_i5/voxel_3mm/dataset.h5
+  orientation_h5: tools/data_gen/outputs/aubo/aubo_i5/voxel_3mm/dataset_orient.h5
+
+input:
+  query_h5: tools/model_validate/inputs/aubo/aubo_i5/default/queries.h5
+  prediction_h5: tools/model_validate/inputs/aubo/aubo_i5/default/predictions.h5
+
+validation:
+  check_position: true
+  check_orientation: true
+  use_pullback: true
+  position_tolerance_m: 0.003
+  orientation_tolerance_rad: 0.0872664626
+  report_false_positive: true
+  report_false_negative: true
+
+output:
+  dir: tools/model_validate/outputs/aubo/aubo_i5/default
+  metrics_json: tools/model_validate/outputs/aubo/aubo_i5/default/metrics.json
+  cases_h5: tools/model_validate/outputs/aubo/aubo_i5/default/cases.h5
+  summary_csv: tools/model_validate/outputs/aubo/aubo_i5/default/summary.csv

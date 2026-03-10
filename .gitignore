@@ -1,0 +1,14 @@
+docs/
+build/
+install/
+log/
+.vscode/
+
+tools/data_gen/outputs/*
+!tools/data_gen/outputs/.gitignore
+
+tools/model_validate/inputs/*
+!tools/model_validate/inputs/.gitignore
+
+tools/model_validate/outputs/*
+!tools/model_validate/outputs/.gitignore

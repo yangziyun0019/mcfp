@@ -1,0 +1,10 @@
+string group_name
+geometry_msgs/PoseStamped target_pose
+string ik_link_name
+---
+bool ik_success
+bool self_collision_free
+bool reachable
+string[] solution_joint_names
+float64[] solution_joint_positions
+string message

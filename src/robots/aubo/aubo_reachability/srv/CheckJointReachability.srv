@@ -1,0 +1,11 @@
+string group_name
+string[] joint_names
+float64[] joint_positions
+string fk_link_name
+---
+bool within_limits
+bool fk_success
+bool self_collision_free
+bool reachable
+geometry_msgs/PoseStamped fk_pose
+string message
