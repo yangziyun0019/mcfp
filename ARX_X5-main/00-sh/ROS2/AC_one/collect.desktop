@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Name=collect
+Comment=collect script
+Exec=gnome-terminal -- bash -c "/home/arx-4070ti/gitee/X5_SDK_KDL/00-sh/ROS2/2025/03collect.sh; exec bash"
+Icon=utilities-terminal
+Terminal=true
+Type=Application
+Categories=Utility;
+
