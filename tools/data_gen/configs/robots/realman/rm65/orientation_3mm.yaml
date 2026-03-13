@@ -1,0 +1,87 @@
+# RealMan RM65 orientation-dataset profile matched to the 3 mm position dataset.
+robot:
+  name: rm65
+  urdf: src/robots/realman/rm_description/urdf/rm_65.urdf
+  srdf: src/robots/realman/rm_moveit_config/config/rm_65_description.srdf
+  group_name: rm_group
+  base_link: base_link
+  ee_link: Link6
+  joint_names:
+    - joint1
+    - joint2
+    - joint3
+    - joint4
+    - joint5
+    - joint6
+
+input:
+  base_h5: tools/data_gen/outputs/realman/rm65/voxel_3mm/dataset.h5
+
+anchors:
+  total: 4000
+  candidate_min_count: 3
+  bins_xyz: [8, 8, 8]
+  min_quota_xyz: 1
+  bins_scr: [6, 4, 4]
+  min_quota_scr: 2
+  radius_mode: linf
+  neighbor_mode: 6
+  weight:
+    alpha: 1.0
+    epsilon: 0.02
+    lambda: 0.25
+    gamma: 2.0
+    beta: 2.0
+    p: 4.0
+    n0: 100.0
+
+sampling:
+  seeds_per_anchor: 32
+  coarse_min: 8192
+  coarse_max: 16384
+  knn_k: 24
+  d_max_mode: adaptive
+  d_max_factor: 3.0
+  d_max_clip_min: 0.25
+  d_max_clip_max: 0.60
+  d_max: 0.40
+  delta_boundary: 0.01
+  min_boundary_edges: 512
+  max_boundary_edges: 4096
+  shell_deltas: [0.005, 0.01, 0.02, 0.04, 0.08]
+  refine_count: 10
+  refine_sigma: 0.02
+  warm_start_mix: 0.7
+  scramble_per_anchor: false
+  sobol_seed: 0
+  q_ref_size: 64
+  q_ref_pool: 4096
+  method3_boundary_max: 0
+  method3_boundary_min: 0
+  method3_min_abs_phi: 0.0
+  method3_phi_margin: 0.0
+
+ik:
+  timeout: 0.005
+  csr_trials: 2
+  random_trials: 1
+  bisect_csr_trials: 2
+  bisect_random_trials: 2
+  search_discretization: 0.005
+
+threads:
+  count: 32
+
+debug:
+  max_anchors: 0
+  start_anchor: 0
+
+output:
+  path: tools/data_gen/outputs/realman/rm65/voxel_3mm/dataset_orient.h5
+  hdf5_chunk: 100000
+  write_joint: true
+  write_method: true
+  write_csr: true
+  flush_per_anchor: true
+  stream_csr: true
+  anchor_only: false

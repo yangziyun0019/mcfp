@@ -25,10 +25,16 @@ PKG_CACHE_FILE="${PKG_BUILD_DIR}/CMakeCache.txt"
 
 # 切换机器人时，优先修改这两个配置路径
 # 位置采样（生成 dataset.h5）配置
-CFG_POS="tools/data_gen/configs/robots/aubo/aubo_i5/position_3mm.yaml"
+# Aubo i5:
+# CFG_POS="tools/data_gen/configs/robots/aubo/aubo_i5/position_3mm.yaml"
+# RealMan RM65:
+CFG_POS="tools/data_gen/configs/robots/realman/rm65/position_3mm.yaml"
 
 # 姿态采样（生成 dataset_orient.h5）配置
-CFG_ORIENT="tools/data_gen/configs/robots/aubo/aubo_i5/orientation_3mm.yaml"
+# Aubo i5:
+# CFG_ORIENT="tools/data_gen/configs/robots/aubo/aubo_i5/orientation_3mm.yaml"
+# RealMan RM65:
+CFG_ORIENT="tools/data_gen/configs/robots/realman/rm65/orientation_3mm.yaml"
 
 # 是否清理旧构建产物
 CLEAN_BUILD=false
