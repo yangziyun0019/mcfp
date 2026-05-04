@@ -1,0 +1,96 @@
+# RealMan RM65 legacy 256-anchor V1.3-compatible orientation-SDF profile.
+robot:
+  name: rm65
+  urdf: src/robots/realman/rm_description/urdf/rm_65.urdf
+  srdf: src/robots/realman/rm_moveit_config/config/rm_65_description.srdf
+  group_name: rm_group
+  base_link: base_link
+  ee_link: Link6
+  joint_names:
+    - joint1
+    - joint2
+    - joint3
+    - joint4
+    - joint5
+    - joint6
+
+input:
+  base_h5: tools/data_gen/outputs/realman/rm65/voxel_3mm/dataset.h5
+
+anchors:
+  total: 256
+  candidate_min_count: 3
+  bins_xyz: [8, 8, 8]
+  min_quota_xyz: 1
+  bins_scr: [6, 4, 4]
+  min_quota_scr: 2
+  radius_mode: linf
+  neighbor_mode: 6
+  weight:
+    alpha: 1.0
+    epsilon: 0.02
+    lambda: 0.25
+    gamma: 2.0
+    beta: 2.0
+    p: 4.0
+    n0: 100.0
+
+sampling:
+  seeds_per_anchor: 32
+  so3_grid: hopf
+  so3_base_cells: 576
+  so3_split_factor: 8
+  so3_max_depth: 3
+  so3_leaf_radius: 0.04
+  so3_stencil_radius_ratio: 0.5
+  so3_refine_band: 0.08
+  delta_boundary: 0.01
+  boundary_refine_steps: 2
+  max_boundary_brackets: 0
+  shell_deltas: [0.02, 0.04]
+  phi_full: 3.141592653589793
+  full_reachable_validation_samples: 1024
+  full_reachable_validation_seed: 20260429
+  warm_start_mix: 0.7
+  q_ref_size: 64
+  q_ref_pool: 4096
+  q_ref_seed: 20260428
+  anchor_quantile_seed: 2026042801
+  anchor_quota_seed_base: 2026042802
+  anchor_quota_seed_stride: 97
+  anchor_global_seed_base: 2026042803
+  anchor_global_seed_stride: 53
+  thread_seed_base: 2026042804
+  thread_seed_stride: 101
+  fallback_seed_base: 2026042805
+  fallback_seed_stride: 17
+
+ik:
+  timeout_coarse: 0.005
+  csr_trials_coarse: 2
+  random_trials_coarse: 1
+  timeout_refine: 0.01
+  csr_trials_refine: 3
+  random_trials_refine: 2
+  timeout_bisect: 0.02
+  csr_trials_bisect: 4
+  random_trials_bisect: 4
+  search_discretization: 0.005
+
+threads:
+  count: 32
+
+debug:
+  max_anchors: 0
+  start_anchor: 0
+
+output:
+  path: tools/data_gen/outputs/realman/rm65/voxel_3mm/dataset_orient_256.h5
+  hdf5_chunk: 100000
+  write_joint: true
+  write_method: true
+  write_cells: true
+  write_csr: true
+  flush_per_anchor: true
+  stream_csr: true
+  anchor_only: false
