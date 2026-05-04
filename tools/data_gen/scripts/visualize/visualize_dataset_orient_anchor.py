@@ -265,7 +265,7 @@ def _collect_boundary_points(
 
 def _sanity_check(phi: np.ndarray, label: np.ndarray, method: np.ndarray) -> Dict[str, float]:
     stats: Dict[str, float] = {}
-    methods = [0, 1, 2, 3]
+    methods = [0, 1, 2, 3, 4]
     for m in methods:
         mask = method == m
         stats[f"count_m{m}"] = int(np.sum(mask))
@@ -292,6 +292,9 @@ def _sanity_check(phi: np.ndarray, label: np.ndarray, method: np.ndarray) -> Dic
         stats["method3_sign_match"] = float(np.mean(np.sign(phi[method == 3]) == np.sign(label[method == 3])))
     else:
         stats["method3_sign_match"] = 1.0
+    stats["method4_phi_full_positive"] = float(np.mean((phi[method == 4] > 0) & (label[method == 4] > 0))) if np.any(
+        method == 4
+    ) else 1.0
     return stats
 
 

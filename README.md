@@ -49,7 +49,7 @@
 当前 Aubo i5 的核心配置文件：
 
 - 位置数据：`tools/data_gen/configs/robots/aubo/aubo_i5/position_3mm.yaml`
-- 姿态数据：`tools/data_gen/configs/robots/aubo/aubo_i5/orientation_3mm.yaml`
+- 姿态数据（V1.3 正式 1024 anchors）：`tools/data_gen/configs/robots/aubo/aubo_i5/orientation_3mm.yaml`
 
 当前默认输出目录：
 
@@ -59,6 +59,65 @@
 
 - `dataset.h5`
 - `dataset_orient.h5`
+
+## Aubo i5 正式数据生成启动方式
+
+统一使用一个脚本启动数据挖掘。默认机器人是 Aubo i5：
+
+```bash
+cd /home/ninesoo/ros2_workspace
+bash tools/data_gen/scripts/runners/run_pipeline_local.sh
+```
+
+默认不带参数等价于 `all`，会自动编译数据生成相关包，然后先跑 3mm 位置 SDF，再基于生成的 `dataset.h5` 继续跑 V1.3 1024-anchor 姿态 SDF。
+
+可选模式：
+
+```bash
+# 完整流程：位置 -> 姿态，默认模式
+bash tools/data_gen/scripts/runners/run_pipeline_local.sh all
+
+# 只跑位置 SDF，生成 dataset.h5
+bash tools/data_gen/scripts/runners/run_pipeline_local.sh pos
+
+# 只跑姿态 SDF，要求位置阶段的 dataset.h5 已存在
+bash tools/data_gen/scripts/runners/run_pipeline_local.sh orient
+
+# 只跑可视化脚本
+bash tools/data_gen/scripts/runners/run_pipeline_local.sh vis
+```
+
+脚本当前固定使用 Aubo 正式配置：
+
+- 位置配置：`tools/data_gen/configs/robots/aubo/aubo_i5/position_3mm.yaml`
+- 姿态配置：`tools/data_gen/configs/robots/aubo/aubo_i5/orientation_3mm.yaml`
+- 输出目录：`tools/data_gen/outputs/aubo/aubo_i5/voxel_3mm/`
+- 运行日志：`tools/data_gen/outputs/aubo/aubo_i5/voxel_3mm/logs/`
+
+脚本默认导出 32 线程 OpenMP 设置，并通过 `/usr/bin/time -v` 记录资源使用。需要临时改线程数时，可以在命令前覆盖环境变量：
+
+```bash
+OMP_NUM_THREADS=24 bash tools/data_gen/scripts/runners/run_pipeline_local.sh all
+```
+
+如果已经编译过，只想直接跑，可以跳过脚本内编译：
+
+```bash
+BUILD_BEFORE_RUN=false bash tools/data_gen/scripts/runners/run_pipeline_local.sh orient
+```
+
+同一个脚本也可以通过 `ROBOT` 切换到其它机械臂：
+
+```bash
+# RealMan RM65 完整流程
+ROBOT=realman bash tools/data_gen/scripts/runners/run_pipeline_local.sh all
+
+# Franka Panda 完整流程
+ROBOT=franka bash tools/data_gen/scripts/runners/run_pipeline_local.sh all
+
+# 只跑 Franka 姿态阶段
+ROBOT=franka bash tools/data_gen/scripts/runners/run_pipeline_local.sh orient
+```
 
 ## 本地使用方法
 
@@ -76,9 +135,9 @@
 常用命令：
 
 ```bash
+bash tools/data_gen/scripts/runners/run_pipeline_local.sh
 bash tools/data_gen/scripts/runners/run_pipeline_local.sh pos
 bash tools/data_gen/scripts/runners/run_pipeline_local.sh orient
-bash tools/data_gen/scripts/runners/run_pipeline_local.sh all
 ```
 
 脚本会自动做这些事情：
@@ -87,7 +146,7 @@ bash tools/data_gen/scripts/runners/run_pipeline_local.sh all
 2. 尝试退出当前 Conda 环境
 3. `source /opt/ros/humble/setup.bash`
 4. 自动清理失效的 `reachability_cli` CMake 缓存
-5. 执行 `colcon build --packages-select reachability_cli --symlink-install`
+5. 执行 `colcon build --packages-select aubo_description aubo_moveit_config reachability_cli --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release`
 6. `source install/setup.bash`
 7. 调用对应的 CLI 生成器
 
@@ -95,7 +154,7 @@ bash tools/data_gen/scripts/runners/run_pipeline_local.sh all
 
 ```bash
 source /opt/ros/humble/setup.bash
-colcon build --packages-select reachability_cli --symlink-install
+colcon build --packages-select aubo_description aubo_moveit_config reachability_cli --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 
 ros2 run reachability_cli dataset_generator_cli \
@@ -157,6 +216,134 @@ ros2 run reachability_cli dataset_generator_cli \
 ros2 run reachability_cli orientation_dataset_cli \
   --config tools/data_gen/configs/robots/aubo/aubo_i5/orientation_3mm.yaml
 ```
+
+## RealMan RM65 正式数据生成命令
+
+RealMan RM65 使用与 Aubo 当前正式流程一致的 3mm 位置网格和 V1.3 1024-anchor 姿态挖掘配置。
+
+核心配置文件：
+
+- 位置数据：`tools/data_gen/configs/robots/realman/rm65/position_3mm.yaml`
+- 姿态数据（V1.3 正式 1024 anchors）：`tools/data_gen/configs/robots/realman/rm65/orientation_3mm.yaml`
+
+默认输出目录：
+
+- `tools/data_gen/outputs/realman/rm65/voxel_3mm/`
+
+### 本机运行
+
+```bash
+cd /home/ninesoo/ros2_workspace
+source /opt/ros/humble/setup.bash
+colcon build \
+  --packages-select rm_description rm_moveit_config reachability_cli \
+  --symlink-install \
+  --cmake-args -DCMAKE_BUILD_TYPE=Release
+source install/setup.bash
+
+export OMP_NUM_THREADS=32
+export OMP_DYNAMIC=false
+export OMP_PROC_BIND=spread
+export OMP_PLACES=threads
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+mkdir -p tools/data_gen/outputs/realman/rm65/voxel_3mm/logs
+
+taskset -c 0-31 /usr/bin/time -v ros2 run reachability_cli dataset_generator_cli \
+  --config tools/data_gen/configs/robots/realman/rm65/position_3mm.yaml \
+  2>&1 | tee tools/data_gen/outputs/realman/rm65/voxel_3mm/logs/rm65_position_3mm_$(date +%Y%m%d_%H%M%S).log
+
+taskset -c 0-31 /usr/bin/time -v ros2 run reachability_cli orientation_dataset_cli \
+  --config tools/data_gen/configs/robots/realman/rm65/orientation_3mm.yaml \
+  2>&1 | tee tools/data_gen/outputs/realman/rm65/voxel_3mm/logs/rm65_orientation_3mm_1024_$(date +%Y%m%d_%H%M%S).log
+```
+
+### 192.168.39.180 运行
+
+部署目录固定为：
+
+```bash
+/home/user/data/ros2_workspace
+```
+
+在 180 机器的本地终端中使用 `tmux` 运行，避免长时间跑数时终端关闭导致任务中断。
+
+推荐直接用统一 runner 启动完整流程：
+
+```bash
+tmux new -s realman_data 'bash -lc '"'"'
+cd /home/user/data/ros2_workspace
+WORKSPACE=/home/user/data/ros2_workspace ROBOT=realman \
+  bash tools/data_gen/scripts/runners/run_pipeline_local.sh all
+exec bash
+'"'"''
+```
+
+只跑位置或只跑姿态：
+
+```bash
+WORKSPACE=/home/user/data/ros2_workspace ROBOT=realman bash tools/data_gen/scripts/runners/run_pipeline_local.sh pos
+WORKSPACE=/home/user/data/ros2_workspace ROBOT=realman bash tools/data_gen/scripts/runners/run_pipeline_local.sh orient
+```
+
+`tmux` 常用操作：
+
+- 暂时离开但不停止任务：按 `Ctrl-b`，松开后按 `d`
+- 重新进入会话：`tmux attach -t realman_data`
+- 查看现有会话：`tmux ls`
+- 跑完后退出会话：在 `tmux` 中执行 `exit`
+- 确认要强制关闭该会话时：`tmux kill-session -t realman_data`
+
+## Franka Emika Panda 正式数据生成命令
+
+Franka Emika Panda 使用同一套 3mm 位置网格和 V1.3 1024-anchor 姿态挖掘流程。
+
+Franka 在 180 机器上只有约 62GiB 内存，位置阶段使用更紧凑的 per-voxel FK seed 配置：
+`sampling.voxel_reservoir_max: 2`。这仍会保留每个命中体素的少量 IK warm-start seed，同时避免 8 seed 配置在 64GB 机器上被 OOM kill。
+
+核心配置文件：
+
+- 位置数据：`tools/data_gen/configs/robots/franka_emika_panda/panda/position_3mm.yaml`
+- 姿态数据（V1.3 正式 1024 anchors）：`tools/data_gen/configs/robots/franka_emika_panda/panda/orientation_3mm.yaml`
+
+默认输出目录：
+
+- `tools/data_gen/outputs/franka_emika_panda/panda/voxel_3mm/`
+
+### 192.168.39.180 运行
+
+如果 `realman_data` 还在跑，不要启动 Franka 正式生成任务，避免两个 32 线程任务抢 CPU。先查看或回到 RealMan 会话：
+
+```bash
+tmux ls
+tmux attach -t realman_data
+```
+
+等 RealMan 跑完后，可以在 180 机器的本地终端直接执行下面这一条命令。它会新建 `franka_data` tmux 会话，自动完成环境初始化，先跑位置 SDF；位置阶段成功生成 `dataset.h5` 后，再继续跑 1024-anchor 姿态 SDF。
+
+```bash
+tmux new -s franka_data 'bash -lc '"'"'
+cd /home/user/data/ros2_workspace
+WORKSPACE=/home/user/data/ros2_workspace ROBOT=franka \
+  bash tools/data_gen/scripts/runners/run_pipeline_local.sh all
+exec bash
+'"'"''
+```
+
+只跑位置或只跑姿态：
+
+```bash
+WORKSPACE=/home/user/data/ros2_workspace ROBOT=franka bash tools/data_gen/scripts/runners/run_pipeline_local.sh pos
+WORKSPACE=/home/user/data/ros2_workspace ROBOT=franka bash tools/data_gen/scripts/runners/run_pipeline_local.sh orient
+```
+
+`tmux` 常用操作：
+
+- 暂时离开但不停止任务：按 `Ctrl-b`，松开后按 `d`
+- 重新进入会话：`tmux attach -t franka_data`
+- 查看现有会话：`tmux ls`
+- 跑完后退出会话：在 `tmux` 中执行 `exit`
+- 确认要强制关闭该会话时：`tmux kill-session -t franka_data`
 
 ## 可视化与后处理
 

@@ -11,10 +11,14 @@ import numpy as np
 
 
 # ======== CONFIG (edit here) ========
+# Aubo i5:
 INPUT_DIR = "tools/data_gen/outputs/aubo/aubo_i5/voxel_3mm"
 HDF5_PATH = "tools/data_gen/outputs/aubo/aubo_i5/voxel_3mm/dataset.h5"
+# RealMan RM65:
+# INPUT_DIR = "tools/data_gen/outputs/realman/rm65/voxel_3mm"
+# HDF5_PATH = "tools/data_gen/outputs/realman/rm65/voxel_3mm/dataset.h5"
 USE_HDF5 = True
-RANDOM_SEED = 42
+RANDOM_SEED = 20260428
 
 SHOW_OCCUPANCY = False
 SHOW_COUNTS = False
@@ -83,7 +87,7 @@ LABEL_SLICE_COORD = 0.0  # world coordinate for x/y/z slices
 LABEL_SLICE_HALF_WIDTH = 0.01 # meters; if None -> 0.5 * voxel_size
 LABEL_USE_MPL = False  # label 1/2: matplotlib 2x2 figure
 LABEL_USE_PV_GRID = True  # label 1/2: pyvista 2x2 interactive figure
-LABEL_SHOW_PV_FOR_1_2 = True # set True to also show pyvista 3D for label 1/2
+LABEL_SHOW_PV_FOR_1_2 = False # set True to also show pyvista 3D for label 1/2
 # ======== CONFIG END ========
 
 

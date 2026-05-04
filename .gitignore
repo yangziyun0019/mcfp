@@ -3,6 +3,13 @@ build/
 install/
 log/
 .vscode/
+.venv-cmrdf/
+.cache/
+.codex
+.codex/
+.ros_logs/
+image*.png
+__pycache__/
 
 tools/data_gen/outputs/*
 !tools/data_gen/outputs/.gitignore

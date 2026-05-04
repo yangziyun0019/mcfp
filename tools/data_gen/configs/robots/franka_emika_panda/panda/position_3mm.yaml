@@ -1,18 +1,19 @@
-# RealMan RM65 position-dataset profile (3 mm voxel size).
+# Franka Emika Panda position-dataset profile (3 mm voxel size).
 robot:
-  name: rm65
-  urdf: src/robots/realman/rm_description/urdf/rm_65.urdf
-  srdf: src/robots/realman/rm_moveit_config/config/rm_65_description.srdf
-  group_name: rm_group
-  base_link: base_link
-  ee_link: Link6
+  name: panda
+  urdf: src/robots/franka_emika_panda/urdf/panda_arm.urdf
+  srdf: src/robots/franka_emika_panda_moveit_config/config/panda_arm.srdf
+  group_name: panda_arm
+  base_link: panda_link0
+  ee_link: panda_link8
   joint_names:
-    - joint1
-    - joint2
-    - joint3
-    - joint4
-    - joint5
-    - joint6
+    - panda_joint1
+    - panda_joint2
+    - panda_joint3
+    - panda_joint4
+    - panda_joint5
+    - panda_joint6
+    - panda_joint7
 
 sampling:
   voxel_size: 0.003
@@ -25,7 +26,7 @@ sampling:
   fk_log_interval: 5000000
   threads: 32
   orientation_bins: 64
-  voxel_reservoir_max: 8
+  voxel_reservoir_max: 2
   coverage_check_interval: 5000000
   coverage_mode: heat
   coverage_delta_ratio: 0.01
@@ -52,7 +53,7 @@ sdf:
   closing_radius_voxels: 1
 
 output:
-  dir: tools/data_gen/outputs/realman/rm65/voxel_3mm
+  dir: tools/data_gen/outputs/franka_emika_panda/panda/voxel_3mm
   write_fk_samples: true
   write_voxel_counts: true
   write_sdf_grid: true
@@ -60,5 +61,5 @@ output:
   write_npy: false
   write_metadata_yaml: false
   write_hdf5: true
-  hdf5_path: tools/data_gen/outputs/realman/rm65/voxel_3mm/dataset.h5
+  hdf5_path: tools/data_gen/outputs/franka_emika_panda/panda/voxel_3mm/dataset.h5
   hdf5_chunk: 200000

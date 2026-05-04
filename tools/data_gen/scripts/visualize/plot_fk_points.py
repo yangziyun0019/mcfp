@@ -10,6 +10,11 @@ import sys
 
 import numpy as np
 
+# RealMan RM65:
+DEFAULT_INPUT_DIR = "tools/data_gen/outputs/realman/rm65/voxel_3mm"
+# Aubo i5:
+# DEFAULT_INPUT_DIR = "tools/data_gen/outputs/aubo/aubo_i5/voxel_3mm"
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -17,7 +22,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--input-dir",
-        default="tools/data_gen/outputs/aubo/aubo_i5/voxel_3mm",
+        default=DEFAULT_INPUT_DIR,
         help="Output directory containing fk_positions.npy",
     )
     parser.add_argument(

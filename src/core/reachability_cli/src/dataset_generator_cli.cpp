@@ -14,8 +14,12 @@
 
 #include <moveit/collision_detection/collision_common.h>
 #include <moveit/kdl_kinematics_plugin/kdl_kinematics_plugin.h>
+#include <moveit/robot_model/link_model.h>
 #include <moveit/robot_model/joint_model_group.h>
 #include <moveit/robot_state/robot_state.h>
+
+#include <boost/random/sobol.hpp>
+#include <boost/random/uniform_01.hpp>
 
 #include <algorithm>
 #include <array>
@@ -26,9 +30,11 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <unordered_map>
 #include <random>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <hdf5.h>
@@ -43,6 +49,8 @@
 
 namespace
 {
+constexpr size_t kMaxStoredJoints = 16;
+
 struct Options
 {
   std::string config_path;
@@ -64,10 +72,12 @@ struct Config
   int aabb_samples = 20000;
   int fk_samples = 200000;
   int fk_max_attempts = 1000000;
-  int random_seed = 0;
+  int random_seed = 20260428;
+  std::string joint_sequence = "sobol_scrambled";
   int fk_log_interval = 10000;
   int thread_count = 0;
   int orientation_bins = 0;
+  int voxel_reservoir_max = 64;
   std::string coverage_mode = "heat";
   int coverage_check_interval = 10000;
   double coverage_delta_ratio = 0.001;
@@ -75,6 +85,12 @@ struct Config
   int coverage_min_occupied = 10000;
   double coverage_heat_min = 1000.0;
   double coverage_heat_alpha = 0.2;
+  int frontier_seed_trials = 8;
+  int frontier_targets_per_voxel = 4;
+  uint64_t frontier_jitter_seed = 2026042801ULL;
+  int frontier_dls_steps = 8;
+  double frontier_dls_lambda = 0.02;
+  int frontier_max_passes = 2;
 
   int ik_attempts = 200;
   double ik_timeout = 0.005;
@@ -129,6 +145,7 @@ struct SampleBuffer
   std::vector<float> quats;
   std::vector<float> joints;
   std::vector<uint64_t> voxels;
+  std::vector<int32_t> orientation_bin;
 
   void clear()
   {
@@ -136,6 +153,7 @@ struct SampleBuffer
     quats.clear();
     joints.clear();
     voxels.clear();
+    orientation_bin.clear();
   }
 
   void reserve(size_t sample_count, size_t joint_count)
@@ -144,12 +162,27 @@ struct SampleBuffer
     quats.reserve(sample_count * 4);
     joints.reserve(sample_count * joint_count);
     voxels.reserve(sample_count);
+    orientation_bin.reserve(sample_count);
   }
 
   size_t size() const
   {
     return voxels.size();
   }
+};
+
+struct StoredSample
+{
+  std::array<float, 3> pos{};
+  std::array<float, 4> quat{};
+  std::array<float, kMaxStoredJoints> joint{};
+  uint8_t joint_count = 0;
+  int32_t orientation_bin = -1;
+};
+
+struct VoxelReservoir
+{
+  std::vector<StoredSample> samples;
 };
 
 enum class CellLabel : uint8_t
@@ -224,21 +257,6 @@ std::vector<std::string> getStringList(const YAML::Node& node, const std::string
   return out;
 }
 
-std::vector<double> getDoubleList(const YAML::Node& node, const std::string& key,
-                                  const std::vector<double>& fallback)
-{
-  if (node && node[key])
-  {
-    std::vector<double> out;
-    for (const auto& item : node[key])
-    {
-      out.push_back(item.as<double>());
-    }
-    return out;
-  }
-  return fallback;
-}
-
 Config loadConfig(const std::string& path)
 {
   YAML::Node root = YAML::LoadFile(path);
@@ -263,9 +281,11 @@ Config loadConfig(const std::string& path)
   cfg.fk_samples = getScalar<int>(sampling, "fk_samples", cfg.fk_samples);
   cfg.fk_max_attempts = getScalar<int>(sampling, "fk_max_attempts", cfg.fk_max_attempts);
   cfg.random_seed = getScalar<int>(sampling, "random_seed", cfg.random_seed);
+  cfg.joint_sequence = getScalar<std::string>(sampling, "joint_sequence", cfg.joint_sequence);
   cfg.fk_log_interval = getScalar<int>(sampling, "fk_log_interval", cfg.fk_log_interval);
   cfg.thread_count = getScalar<int>(sampling, "threads", cfg.thread_count);
   cfg.orientation_bins = getScalar<int>(sampling, "orientation_bins", cfg.orientation_bins);
+  cfg.voxel_reservoir_max = getScalar<int>(sampling, "voxel_reservoir_max", cfg.voxel_reservoir_max);
   cfg.coverage_mode = getScalar<std::string>(sampling, "coverage_mode", cfg.coverage_mode);
   cfg.coverage_check_interval = getScalar<int>(sampling, "coverage_check_interval", cfg.coverage_check_interval);
   cfg.coverage_delta_ratio = getScalar<double>(sampling, "coverage_delta_ratio", cfg.coverage_delta_ratio);
@@ -273,6 +293,13 @@ Config loadConfig(const std::string& path)
   cfg.coverage_min_occupied = getScalar<int>(sampling, "coverage_min_occupied", cfg.coverage_min_occupied);
   cfg.coverage_heat_min = getScalar<double>(sampling, "coverage_heat_min", cfg.coverage_heat_min);
   cfg.coverage_heat_alpha = getScalar<double>(sampling, "coverage_heat_alpha", cfg.coverage_heat_alpha);
+  cfg.frontier_seed_trials = getScalar<int>(sampling, "frontier_seed_trials", cfg.frontier_seed_trials);
+  cfg.frontier_targets_per_voxel =
+      getScalar<int>(sampling, "frontier_targets_per_voxel", cfg.frontier_targets_per_voxel);
+  cfg.frontier_jitter_seed = getScalar<uint64_t>(sampling, "frontier_jitter_seed", cfg.frontier_jitter_seed);
+  cfg.frontier_dls_steps = getScalar<int>(sampling, "frontier_dls_steps", cfg.frontier_dls_steps);
+  cfg.frontier_dls_lambda = getScalar<double>(sampling, "frontier_dls_lambda", cfg.frontier_dls_lambda);
+  cfg.frontier_max_passes = getScalar<int>(sampling, "frontier_max_passes", cfg.frontier_max_passes);
 
   cfg.ik_attempts = getScalar<int>(ik, "attempts", cfg.ik_attempts);
   cfg.ik_timeout = getScalar<double>(ik, "timeout", cfg.ik_timeout);
@@ -364,46 +391,254 @@ Eigen::Quaterniond sampleUniformQuaternion(random_numbers::RandomNumberGenerator
   return q;
 }
 
-bool feasiblePos(const Eigen::Vector3d& position, moveit::core::RobotState& state,
-                 const moveit::core::JointModelGroup* jmg, const std::string& ee_link, double ik_timeout,
-                 int ik_attempts, planning_scene::PlanningScenePtr scene,
-                 collision_detection::CollisionRequest& request, collision_detection::CollisionResult& result,
-                 random_numbers::RandomNumberGenerator& rng)
+struct JointBound
 {
-  geometry_msgs::msg::Pose pose;
-  pose.position.x = position.x();
-  pose.position.y = position.y();
-  pose.position.z = position.z();
+  double min = -M_PI;
+  double max = M_PI;
+};
 
-  for (int attempt = 0; attempt < ik_attempts; ++attempt)
+std::vector<JointBound> collectJointBounds(const moveit::core::RobotModelPtr& model,
+                                           const std::vector<std::string>& joint_names)
+{
+  std::vector<JointBound> bounds;
+  bounds.reserve(joint_names.size());
+  for (const auto& name : joint_names)
   {
-    const Eigen::Quaterniond q = sampleUniformQuaternion(rng);
-    pose.orientation.w = q.w();
-    pose.orientation.x = q.x();
-    pose.orientation.y = q.y();
-    pose.orientation.z = q.z();
-
-    state.setToRandomPositions(jmg, rng);
-    const bool ik_ok = state.setFromIK(jmg, pose, ee_link, ik_timeout);
-    if (!ik_ok)
+    const auto& b = model->getVariableBounds(name);
+    JointBound out;
+    if (b.position_bounded_)
     {
-      continue;
+      out.min = b.min_position_;
+      out.max = b.max_position_;
     }
+    bounds.push_back(out);
+  }
+  return bounds;
+}
 
-    state.update();
-    if (!state.satisfiesBounds(jmg))
+class ScrambledSobolJointSampler
+{
+public:
+  ScrambledSobolJointSampler(size_t dim, uint64_t seed) : dim_(dim), sobol_(static_cast<unsigned int>(dim))
+  {
+    std::mt19937_64 rng(seed == 0 ? 0x9e3779b97f4a7c15ULL : seed);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+    shift_.resize(dim_, 0.0);
+    for (size_t i = 0; i < dim_; ++i)
     {
-      continue;
-    }
-
-    result.clear();
-    scene->checkSelfCollision(request, result, state);
-    if (!result.collision)
-    {
-      return true;
+      shift_[i] = unit(rng);
     }
   }
+
+  void next(std::vector<double>& out, size_t count)
+  {
+    out.resize(count * dim_);
+    for (size_t i = 0; i < count; ++i)
+    {
+      for (size_t j = 0; j < dim_; ++j)
+      {
+        double u = uniform_(sobol_) + shift_[j];
+        u -= std::floor(u);
+        if (u <= 0.0)
+        {
+          u = std::numeric_limits<double>::epsilon();
+        }
+        if (u >= 1.0)
+        {
+          u = 1.0 - std::numeric_limits<double>::epsilon();
+        }
+        out[i * dim_ + j] = u;
+      }
+    }
+  }
+
+private:
+  size_t dim_ = 0;
+  boost::random::sobol sobol_;
+  boost::random::uniform_01<double> uniform_;
+  std::vector<double> shift_;
+};
+
+void unitToJoint(const double* unit, const std::vector<JointBound>& bounds, std::vector<double>& joint)
+{
+  joint.resize(bounds.size());
+  for (size_t i = 0; i < bounds.size(); ++i)
+  {
+    joint[i] = bounds[i].min + unit[i] * (bounds[i].max - bounds[i].min);
+  }
+}
+
+bool voxelIndexForPosition(const Grid& grid, const Eigen::Vector3d& pos, size_t& idx)
+{
+  const double gx = (pos.x() - grid.origin.x()) / grid.voxel_size;
+  const double gy = (pos.y() - grid.origin.y()) / grid.voxel_size;
+  const double gz = (pos.z() - grid.origin.z()) / grid.voxel_size;
+  if (gx < 0.0 || gy < 0.0 || gz < 0.0 || gx >= static_cast<double>(grid.nx) ||
+      gy >= static_cast<double>(grid.ny) || gz >= static_cast<double>(grid.nz))
+  {
+    return false;
+  }
+  idx = grid.index(static_cast<size_t>(gx), static_cast<size_t>(gy), static_cast<size_t>(gz));
+  return true;
+}
+
+int nearestOrientationBin(const Eigen::Quaterniond& quat, const std::vector<std::array<float, 4>>& bins)
+{
+  if (bins.empty())
+  {
+    return -1;
+  }
+  const float qx = static_cast<float>(quat.x());
+  const float qy = static_cast<float>(quat.y());
+  const float qz = static_cast<float>(quat.z());
+  const float qw = static_cast<float>(quat.w());
+  float best = -1.0f;
+  int best_idx = 0;
+  for (int i = 0; i < static_cast<int>(bins.size()); ++i)
+  {
+    const auto& b = bins[static_cast<size_t>(i)];
+    float dot = qx * b[0] + qy * b[1] + qz * b[2] + qw * b[3];
+    if (dot < 0.0f)
+    {
+      dot = -dot;
+    }
+    if (dot > best)
+    {
+      best = dot;
+      best_idx = i;
+    }
+  }
+  return best_idx;
+}
+
+void setOrientationBit(std::vector<uint64_t>& orientation_bits, size_t orientation_words, size_t voxel_id,
+                       int orientation_bin)
+{
+  if (orientation_words == 0 || orientation_bin < 0)
+  {
+    return;
+  }
+  const size_t word_base = voxel_id * orientation_words;
+  const size_t word_index = word_base + static_cast<size_t>(orientation_bin / 64);
+  const uint64_t mask = 1ULL << (orientation_bin % 64);
+  orientation_bits[word_index] |= mask;
+}
+
+double jointDistanceSq(const StoredSample& a, const StoredSample& b)
+{
+  const size_t n = std::min<size_t>(a.joint_count, b.joint_count);
+  double sum = 0.0;
+  for (size_t i = 0; i < n; ++i)
+  {
+    const double d = static_cast<double>(a.joint[i]) - static_cast<double>(b.joint[i]);
+    sum += d * d;
+  }
+  return sum;
+}
+
+size_t mostRedundantSample(const std::vector<StoredSample>& samples)
+{
+  if (samples.size() <= 1)
+  {
+    return 0;
+  }
+  size_t best_idx = 0;
+  double best_nearest = std::numeric_limits<double>::infinity();
+  for (size_t i = 0; i < samples.size(); ++i)
+  {
+    double nearest = std::numeric_limits<double>::infinity();
+    for (size_t j = 0; j < samples.size(); ++j)
+    {
+      if (i == j)
+      {
+        continue;
+      }
+      nearest = std::min(nearest, jointDistanceSq(samples[i], samples[j]));
+    }
+    if (nearest < best_nearest)
+    {
+      best_nearest = nearest;
+      best_idx = i;
+    }
+  }
+  return best_idx;
+}
+
+bool addReservoirSample(std::unordered_map<uint64_t, VoxelReservoir>& reservoirs, uint64_t voxel_id,
+                        const StoredSample& sample, size_t capacity)
+{
+  if (capacity == 0)
+  {
+    return false;
+  }
+  auto& reservoir = reservoirs[voxel_id];
+  if (reservoir.samples.size() < capacity)
+  {
+    reservoir.samples.push_back(sample);
+    return true;
+  }
+
+  bool has_orientation_bin = sample.orientation_bin < 0;
+  for (const auto& s : reservoir.samples)
+  {
+    if (s.orientation_bin == sample.orientation_bin)
+    {
+      has_orientation_bin = true;
+      break;
+    }
+  }
+
+  if (!has_orientation_bin)
+  {
+    reservoir.samples[mostRedundantSample(reservoir.samples)] = sample;
+    return true;
+  }
+
+  double new_nearest = std::numeric_limits<double>::infinity();
+  for (const auto& s : reservoir.samples)
+  {
+    new_nearest = std::min(new_nearest, jointDistanceSq(sample, s));
+  }
+
+  size_t replace_idx = 0;
+  double weakest_nearest = std::numeric_limits<double>::infinity();
+  for (size_t i = 0; i < reservoir.samples.size(); ++i)
+  {
+    double nearest = std::numeric_limits<double>::infinity();
+    for (size_t j = 0; j < reservoir.samples.size(); ++j)
+    {
+      if (i == j)
+      {
+        continue;
+      }
+      nearest = std::min(nearest, jointDistanceSq(reservoir.samples[i], reservoir.samples[j]));
+    }
+    if (nearest < weakest_nearest)
+    {
+      weakest_nearest = nearest;
+      replace_idx = i;
+    }
+  }
+  if (new_nearest > weakest_nearest)
+  {
+    reservoir.samples[replace_idx] = sample;
+    return true;
+  }
   return false;
+}
+
+uint64_t splitmix64(uint64_t x)
+{
+  x += 0x9e3779b97f4a7c15ULL;
+  x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+  x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+  return x ^ (x >> 31);
+}
+
+double hashUnit(uint64_t x)
+{
+  const uint64_t v = splitmix64(x);
+  return static_cast<double>(v >> 11) * (1.0 / 9007199254740992.0);
 }
 
 void distanceTransform1D(const std::vector<float>& f, int n, std::vector<float>& d, std::vector<int>& v,
@@ -825,11 +1060,17 @@ std::string buildMetadataYaml(const Config& cfg, const Grid& g, const Eigen::Vec
   out << "grid_dims: [" << g.nx << ", " << g.ny << ", " << g.nz << "]\n";
   out << "grid_origin: [" << g.origin.x() << ", " << g.origin.y() << ", " << g.origin.z() << "]\n";
   out << "random_seed: " << seed_used << "\n";
+  out << "sobol_scramble_seed: " << seed_used << "\n";
+  out << "orientation_bin_seed: " << (static_cast<uint64_t>(seed_used) + 131ULL) << "\n";
+  out << "thread_seed_base: " << seed_used << "\n";
+  out << "thread_seed_stride: 7919\n";
   out << "aabb_samples: " << cfg.aabb_samples << "\n";
   out << "fk_samples_target: " << cfg.fk_samples << "\n";
   out << "fk_samples_kept: " << fk_kept << "\n";
   out << "fk_samples_attempts: " << fk_attempts << "\n";
   out << "fk_samples_stored: " << fk_stored << "\n";
+  out << "joint_sequence: " << cfg.joint_sequence << "\n";
+  out << "voxel_reservoir_max: " << cfg.voxel_reservoir_max << "\n";
   out << "orientation_bins: " << cfg.orientation_bins << "\n";
   out << "write_orientation_coverage: " << (cfg.write_orientation_coverage ? "true" : "false") << "\n";
   out << "coverage_mode: " << cfg.coverage_mode << "\n";
@@ -839,6 +1080,12 @@ std::string buildMetadataYaml(const Config& cfg, const Grid& g, const Eigen::Vec
   out << "coverage_min_occupied: " << cfg.coverage_min_occupied << "\n";
   out << "coverage_heat_min: " << cfg.coverage_heat_min << "\n";
   out << "coverage_heat_alpha: " << cfg.coverage_heat_alpha << "\n";
+  out << "frontier_seed_trials: " << cfg.frontier_seed_trials << "\n";
+  out << "frontier_targets_per_voxel: " << cfg.frontier_targets_per_voxel << "\n";
+  out << "frontier_jitter_seed: " << cfg.frontier_jitter_seed << "\n";
+  out << "frontier_dls_steps: " << cfg.frontier_dls_steps << "\n";
+  out << "frontier_dls_lambda: " << cfg.frontier_dls_lambda << "\n";
+  out << "frontier_max_passes: " << cfg.frontier_max_passes << "\n";
   out << "search_discretization: " << cfg.search_discretization << "\n";
   out << "inside_count: " << inside_count << "\n";
   out << "outside_count: " << outside_count << "\n";
@@ -1053,6 +1300,32 @@ struct Hdf5Writer
     H5Dclose(dset);
     H5Sclose(space);
     return ok;
+  }
+
+  bool writeScalar(hid_t group, const std::string& name, hid_t dtype, const void* data)
+  {
+    if (group < 0)
+    {
+      return false;
+    }
+    hsize_t dims[1] = { 1 };
+    hid_t space = H5Screate_simple(1, dims, nullptr);
+    hid_t dset = H5Dcreate2(group, name.c_str(), dtype, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (dset < 0)
+    {
+      H5Sclose(space);
+      return false;
+    }
+    const bool ok = H5Dwrite(dset, dtype, H5S_ALL, H5S_ALL, H5P_DEFAULT, data) >= 0;
+    H5Dclose(dset);
+    H5Sclose(space);
+    return ok;
+  }
+
+  template <typename T>
+  bool writeScalarValue(hid_t group, const std::string& name, hid_t dtype, const T& value)
+  {
+    return writeScalar(group, name, dtype, &value);
   }
 
   bool writeString(hid_t group, const std::string& name, const std::string& value)
@@ -1372,6 +1645,18 @@ int main(int argc, char** argv)
   {
     cfg.coverage_heat_min = 0.0;
   }
+  if (cfg.joint_sequence != "sobol_scrambled")
+  {
+    RCLCPP_WARN(logger, "Unknown sampling.joint_sequence='%s', fallback to 'sobol_scrambled'",
+                cfg.joint_sequence.c_str());
+    cfg.joint_sequence = "sobol_scrambled";
+  }
+  cfg.voxel_reservoir_max = std::max(0, cfg.voxel_reservoir_max);
+  cfg.frontier_seed_trials = std::max(0, cfg.frontier_seed_trials);
+  cfg.frontier_targets_per_voxel = std::max(1, cfg.frontier_targets_per_voxel);
+  cfg.frontier_dls_steps = std::max(0, cfg.frontier_dls_steps);
+  cfg.frontier_dls_lambda = std::max(1e-6, cfg.frontier_dls_lambda);
+  cfg.frontier_max_passes = std::max(0, cfg.frontier_max_passes);
 
   RCLCPP_INFO(logger, "Config: robot=%s group=%s ee_link=%s", cfg.robot_name.c_str(), cfg.group_name.c_str(),
               cfg.ee_link.c_str());
@@ -1379,11 +1664,16 @@ int main(int argc, char** argv)
   RCLCPP_INFO(logger, "SRDF: %s", cfg.srdf_path.c_str());
   RCLCPP_INFO(logger, "Sampling: voxel=%.4f aabb_samples=%d fk_samples=%d fk_max_attempts=%d fk_log_interval=%d",
               cfg.voxel_size, cfg.aabb_samples, cfg.fk_samples, cfg.fk_max_attempts, cfg.fk_log_interval);
+  RCLCPP_INFO(logger, "Sampling sequence: %s reservoir_max=%d", cfg.joint_sequence.c_str(),
+              cfg.voxel_reservoir_max);
   RCLCPP_INFO(logger,
               "Sampling stop: mode=%s interval=%d delta_ratio=%.4f heat_min=%.6f heat_alpha=%.2f patience=%d "
               "min_occupied=%d",
               cfg.coverage_mode.c_str(), cfg.coverage_check_interval, cfg.coverage_delta_ratio, cfg.coverage_heat_min,
               cfg.coverage_heat_alpha, cfg.coverage_patience, cfg.coverage_min_occupied);
+  RCLCPP_INFO(logger, "Frontier: passes=%d seeds=%d targets=%d dls_steps=%d lambda=%.4f",
+              cfg.frontier_max_passes, cfg.frontier_seed_trials, cfg.frontier_targets_per_voxel,
+              cfg.frontier_dls_steps, cfg.frontier_dls_lambda);
   RCLCPP_INFO(logger, "Sampling threads: %d", thread_count);
   RCLCPP_INFO(logger, "Orientation coverage: bins=%d enabled=%s", cfg.orientation_bins,
               cfg.write_orientation_coverage ? "true" : "false");
@@ -1456,8 +1746,17 @@ int main(int argc, char** argv)
   }
 
   const size_t joint_count = jmg->getVariableCount();
+  if (joint_count > kMaxStoredJoints)
+  {
+    RCLCPP_ERROR(logger, "Joint count %zu exceeds compact stored-sample capacity %zu", joint_count,
+                 kMaxStoredJoints);
+    rclcpp::shutdown();
+    return 1;
+  }
   const std::vector<std::string> joint_names =
       cfg.joint_names.empty() ? jmg->getVariableNames() : cfg.joint_names;
+  const std::vector<JointBound> joint_bounds = collectJointBounds(robot_model, joint_names);
+  const moveit::core::LinkModel* ee_link_model = robot_model->getLinkModel(cfg.ee_link);
 
   auto solver_allocator = [node, robot_model, cfg](const moveit::core::JointModelGroup* group)
       -> kinematics::KinematicsBasePtr {
@@ -1486,9 +1785,12 @@ int main(int argc, char** argv)
   int seed_used = cfg.random_seed;
   if (seed_used == 0)
   {
-    seed_used = static_cast<int>(std::random_device{}());
+    seed_used = 20260428;
+    RCLCPP_WARN(logger, "sampling.random_seed=0 is not reproducible; using deterministic fallback seed %d.",
+                seed_used);
   }
   random_numbers::RandomNumberGenerator rng(seed_used);
+  ScrambledSobolJointSampler joint_sampler(joint_count, static_cast<uint64_t>(seed_used));
 
   struct ThreadContext
   {
@@ -1511,9 +1813,13 @@ int main(int argc, char** argv)
 
   size_t aabb_kept = 0;
   const int aabb_report_interval = std::max(1, cfg.aabb_samples / 10);
+  std::vector<double> unit_sample;
+  std::vector<double> joint_positions(joint_count, 0.0);
   for (int i = 0; i < cfg.aabb_samples; ++i)
   {
-    state.setToRandomPositions(jmg, rng);
+    joint_sampler.next(unit_sample, 1);
+    unitToJoint(unit_sample.data(), joint_bounds, joint_positions);
+    state.setJointGroupPositions(jmg, joint_positions);
     state.update();
     result.clear();
     scene->checkSelfCollision(request, result, state);
@@ -1587,6 +1893,15 @@ int main(int argc, char** argv)
     hdf5_writer.writeString(hdf5_writer.meta_group, "ee_link", cfg.ee_link);
     hdf5_writer.writeStringArray(hdf5_writer.meta_group, "joint_names", joint_names);
     hdf5_writer.writeString(hdf5_writer.meta_group, "config_path", options.config_path);
+    hdf5_writer.writeScalarValue<int32_t>(hdf5_writer.meta_group, "random_seed", H5T_STD_I32LE, seed_used);
+    hdf5_writer.writeScalarValue<uint64_t>(hdf5_writer.meta_group, "sobol_scramble_seed", H5T_STD_U64LE,
+                                           static_cast<uint64_t>(seed_used));
+    hdf5_writer.writeScalarValue<uint64_t>(hdf5_writer.meta_group, "orientation_bin_seed", H5T_STD_U64LE,
+                                           static_cast<uint64_t>(seed_used) + 131ULL);
+    hdf5_writer.writeScalarValue<int32_t>(hdf5_writer.meta_group, "thread_seed_base", H5T_STD_I32LE, seed_used);
+    hdf5_writer.writeScalarValue<int32_t>(hdf5_writer.meta_group, "thread_seed_stride", H5T_STD_I32LE, 7919);
+    hdf5_writer.writeScalarValue<uint64_t>(hdf5_writer.meta_group, "frontier_jitter_seed", H5T_STD_U64LE,
+                                           cfg.frontier_jitter_seed);
     if (!config_yaml.empty())
     {
       hdf5_writer.writeString(hdf5_writer.meta_group, "config_yaml", config_yaml);
@@ -1615,22 +1930,17 @@ int main(int argc, char** argv)
     RCLCPP_INFO(logger, "Orientation coverage buffer: %.2f MB", bytes / (1024.0 * 1024.0));
   }
 
-  std::vector<std::atomic<uint32_t>> voxel_counts(grid_size);
-  for (size_t i = 0; i < grid_size; ++i)
-  {
-    voxel_counts[i].store(0, std::memory_order_relaxed);
-  }
-  std::atomic<size_t> occupied_voxels_atomic{ 0 };
+  std::vector<uint32_t> voxel_counts(grid_size, 0);
+  size_t occupied_voxels = 0;
 
   const bool write_samples_hdf5 = cfg.write_hdf5 && cfg.write_fk_samples;
   const bool write_samples_npy = cfg.write_npy && cfg.write_fk_samples;
+  (void)write_samples_npy;
+  const bool collect_reservoir_samples = cfg.write_fk_samples && cfg.voxel_reservoir_max > 0;
   std::vector<SampleBuffer> sample_buffers;
-  if (write_samples_hdf5)
-  {
-    sample_buffers.resize(static_cast<size_t>(thread_count));
-  }
+  sample_buffers.resize(static_cast<size_t>(thread_count));
 
-  const bool keep_fk_samples = write_samples_npy;
+  const bool keep_fk_samples = false;
   std::vector<float> fk_positions;
   std::vector<float> fk_quats;
   const size_t fk_capacity = keep_fk_samples ? static_cast<size_t>(cfg.fk_samples) : 0;
@@ -1640,11 +1950,16 @@ int main(int argc, char** argv)
     fk_quats.resize(fk_capacity * 4);
   }
 
-  std::atomic<size_t> fk_kept_atomic{ 0 };
-  std::atomic<size_t> fk_store_atomic{ 0 };
+  std::unordered_map<uint64_t, VoxelReservoir> reservoirs;
+  if (collect_reservoir_samples)
+  {
+    reservoirs.reserve(static_cast<size_t>(std::max(1024, cfg.coverage_min_occupied)));
+  }
+
   size_t fk_attempts = 0;
   size_t fk_kept = 0;
   size_t fk_stored = 0;
+  size_t reservoir_sample_count = 0;
   const size_t fk_report_interval =
       std::max<size_t>(1, static_cast<size_t>(cfg.fk_log_interval > 0 ? cfg.fk_log_interval : cfg.fk_max_attempts / 20));
   size_t next_log_at = fk_report_interval;
@@ -1658,8 +1973,10 @@ int main(int argc, char** argv)
   {
     const size_t remaining_attempts = static_cast<size_t>(cfg.fk_max_attempts) - fk_attempts;
     const size_t batch_attempts = std::min(remaining_attempts, static_cast<size_t>(coverage_interval));
+    std::vector<double> unit_batch;
+    joint_sampler.next(unit_batch, batch_attempts);
 
-    if (write_samples_hdf5)
+    if (!sample_buffers.empty())
     {
       const size_t reserve_count = std::max<size_t>(1, batch_attempts / static_cast<size_t>(thread_count));
       for (auto& buffer : sample_buffers)
@@ -1679,7 +1996,8 @@ int main(int argc, char** argv)
       tid = omp_get_thread_num();
 #endif
       auto& ctx = thread_contexts[static_cast<size_t>(tid)];
-      ctx.state.setToRandomPositions(jmg, ctx.rng);
+      unitToJoint(&unit_batch[attempt_idx * joint_count], joint_bounds, ctx.joint_positions);
+      ctx.state.setJointGroupPositions(jmg, ctx.joint_positions);
       ctx.state.update();
       ctx.result.clear();
       scene->checkSelfCollision(request, ctx.result, ctx.state);
@@ -1693,58 +2011,14 @@ int main(int argc, char** argv)
       Eigen::Quaterniond quat(tf.rotation());
       quat.normalize();
 
-      const double gx = (pos.x() - grid.origin.x()) / grid.voxel_size;
-      const double gy = (pos.y() - grid.origin.y()) / grid.voxel_size;
-      const double gz = (pos.z() - grid.origin.z()) / grid.voxel_size;
-      if (gx < 0.0 || gy < 0.0 || gz < 0.0 || gx >= static_cast<double>(grid.nx) ||
-          gy >= static_cast<double>(grid.ny) || gz >= static_cast<double>(grid.nz))
+      size_t idx = 0;
+      if (!voxelIndexForPosition(grid, pos, idx))
       {
         continue;
       }
 
-      const size_t xi = static_cast<size_t>(gx);
-      const size_t yi = static_cast<size_t>(gy);
-      const size_t zi = static_cast<size_t>(gz);
-      const size_t idx = grid.index(xi, yi, zi);
-
-      if (track_orientation)
-      {
-        const float qx = static_cast<float>(quat.x());
-        const float qy = static_cast<float>(quat.y());
-        const float qz = static_cast<float>(quat.z());
-        const float qw = static_cast<float>(quat.w());
-        float best = -1.0f;
-        int best_idx = 0;
-        for (int i = 0; i < cfg.orientation_bins; ++i)
-        {
-          const auto& b = orientation_bins[static_cast<size_t>(i)];
-          float dot = qx * b[0] + qy * b[1] + qz * b[2] + qw * b[3];
-          if (dot < 0.0f)
-          {
-            dot = -dot;
-          }
-          if (dot > best)
-          {
-            best = dot;
-            best_idx = i;
-          }
-        }
-        const size_t word_base = idx * orientation_words;
-        const size_t word_index = word_base + static_cast<size_t>(best_idx / 64);
-        const uint64_t mask = 1ULL << (best_idx % 64);
-        __atomic_fetch_or(&orientation_bits[word_index], mask, __ATOMIC_RELAXED);
-      }
-
-      const uint32_t prev =
-          voxel_counts[idx].fetch_add(1, std::memory_order_relaxed);
-      if (prev == 0)
-      {
-        occupied_voxels_atomic.fetch_add(1, std::memory_order_relaxed);
-      }
-
-      fk_kept_atomic.fetch_add(1, std::memory_order_relaxed);
-
-      if (write_samples_hdf5)
+      const int orientation_bin = nearestOrientationBin(quat, orientation_bins);
+      if (!sample_buffers.empty())
       {
         SampleBuffer& buffer = sample_buffers[static_cast<size_t>(tid)];
         buffer.positions.push_back(static_cast<float>(pos.x()));
@@ -1754,38 +2028,17 @@ int main(int argc, char** argv)
         buffer.quats.push_back(static_cast<float>(quat.y()));
         buffer.quats.push_back(static_cast<float>(quat.z()));
         buffer.quats.push_back(static_cast<float>(quat.w()));
-        ctx.state.copyJointGroupPositions(jmg, ctx.joint_positions);
         for (size_t j = 0; j < ctx.joint_positions.size(); ++j)
         {
           buffer.joints.push_back(static_cast<float>(ctx.joint_positions[j]));
         }
         buffer.voxels.push_back(static_cast<uint64_t>(idx));
+        buffer.orientation_bin.push_back(static_cast<int32_t>(orientation_bin));
       }
-
-      if (!keep_fk_samples || fk_capacity == 0)
-      {
-        continue;
-      }
-
-      const size_t store_idx = fk_store_atomic.fetch_add(1, std::memory_order_relaxed);
-      if (store_idx >= fk_capacity)
-      {
-        continue;
-      }
-
-      const size_t pos_offset = store_idx * 3;
-      fk_positions[pos_offset] = static_cast<float>(pos.x());
-      fk_positions[pos_offset + 1] = static_cast<float>(pos.y());
-      fk_positions[pos_offset + 2] = static_cast<float>(pos.z());
-
-      const size_t quat_offset = store_idx * 4;
-      fk_quats[quat_offset] = static_cast<float>(quat.x());
-      fk_quats[quat_offset + 1] = static_cast<float>(quat.y());
-      fk_quats[quat_offset + 2] = static_cast<float>(quat.z());
-      fk_quats[quat_offset + 3] = static_cast<float>(quat.w());
     }
 
-    if (write_samples_hdf5)
+    size_t batch_kept = 0;
+    if (!sample_buffers.empty())
     {
       for (auto& buffer : sample_buffers)
       {
@@ -1793,27 +2046,52 @@ int main(int argc, char** argv)
         {
           continue;
         }
-        if (!hdf5_writer.appendSamples(buffer))
+        const size_t count = buffer.size();
+        for (size_t i = 0; i < count; ++i)
         {
-          RCLCPP_ERROR(logger, "Failed to append HDF5 samples.");
-          hdf5_writer.close();
-          rclcpp::shutdown();
-          return 1;
+          const uint64_t voxel_id = buffer.voxels[i];
+          if (voxel_id >= grid_size)
+          {
+            continue;
+          }
+          if (voxel_counts[static_cast<size_t>(voxel_id)] == 0)
+          {
+            ++occupied_voxels;
+          }
+          ++voxel_counts[static_cast<size_t>(voxel_id)];
+          setOrientationBit(orientation_bits, orientation_words, static_cast<size_t>(voxel_id),
+                            buffer.orientation_bin[i]);
+          if (collect_reservoir_samples)
+          {
+            StoredSample sample;
+            sample.pos = { buffer.positions[i * 3], buffer.positions[i * 3 + 1], buffer.positions[i * 3 + 2] };
+            sample.quat = { buffer.quats[i * 4], buffer.quats[i * 4 + 1], buffer.quats[i * 4 + 2],
+                            buffer.quats[i * 4 + 3] };
+            sample.joint_count = static_cast<uint8_t>(joint_count);
+            for (size_t j = 0; j < joint_count; ++j)
+            {
+              sample.joint[j] = buffer.joints[i * joint_count + j];
+            }
+            sample.orientation_bin = buffer.orientation_bin[i];
+            const auto before_it = reservoirs.find(voxel_id);
+            const size_t before =
+                before_it == reservoirs.end() ? 0 : before_it->second.samples.size();
+            addReservoirSample(reservoirs, voxel_id, sample, static_cast<size_t>(cfg.voxel_reservoir_max));
+            const auto after_it = reservoirs.find(voxel_id);
+            const size_t after = after_it == reservoirs.end() ? 0 : after_it->second.samples.size();
+            if (after > before)
+            {
+              reservoir_sample_count += after - before;
+            }
+          }
+          ++batch_kept;
         }
       }
     }
 
     fk_attempts += batch_attempts;
-    fk_kept = fk_kept_atomic.load(std::memory_order_relaxed);
-    if (write_samples_hdf5)
-    {
-      fk_stored = hdf5_writer.sample_count;
-    }
-    else
-    {
-      fk_stored = keep_fk_samples ? std::min(fk_store_atomic.load(std::memory_order_relaxed), fk_capacity) : 0;
-    }
-    const size_t occupied_voxels = occupied_voxels_atomic.load(std::memory_order_relaxed);
+    fk_kept += batch_kept;
+    fk_stored = collect_reservoir_samples ? reservoir_sample_count : 0;
 
     if (fk_attempts >= next_log_at || fk_attempts >= static_cast<size_t>(cfg.fk_max_attempts) ||
         fk_kept >= static_cast<size_t>(cfg.fk_samples))
@@ -1895,10 +2173,326 @@ int main(int argc, char** argv)
 
     if (stagnation_count >= cfg.coverage_patience)
     {
-      RCLCPP_INFO(logger, "Coverage converged. Stop FK sampling early.");
+      RCLCPP_INFO(logger, "Coverage plateau reached. Switch to frontier refinement.");
       break;
     }
   }
+
+  size_t frontier_added_total = 0;
+  const int frontier_offsets[6][3] = {
+    {1, 0, 0},  {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1},
+  };
+
+  auto sample_from_state = [&](ThreadContext& ctx, uint64_t voxel_id, int orientation_bin) {
+    StoredSample sample;
+    const Eigen::Isometry3d& tf = ctx.state.getGlobalLinkTransform(cfg.ee_link);
+    const Eigen::Vector3d pos = tf.translation();
+    Eigen::Quaterniond quat(tf.rotation());
+    quat.normalize();
+    sample.pos = { static_cast<float>(pos.x()), static_cast<float>(pos.y()), static_cast<float>(pos.z()) };
+    sample.quat = { static_cast<float>(quat.x()), static_cast<float>(quat.y()), static_cast<float>(quat.z()),
+                    static_cast<float>(quat.w()) };
+    sample.joint_count = static_cast<uint8_t>(joint_count);
+    ctx.state.copyJointGroupPositions(jmg, ctx.joint_positions);
+    for (size_t j = 0; j < joint_count; ++j)
+    {
+      sample.joint[j] = static_cast<float>(ctx.joint_positions[j]);
+    }
+    sample.orientation_bin = orientation_bin;
+    (void)voxel_id;
+    return sample;
+  };
+
+  auto try_frontier_dls = [&](const Eigen::Vector3d& target, size_t target_voxel,
+                              const std::vector<float>& seed_joint, ThreadContext& ctx,
+                              StoredSample& sample_out) -> bool {
+    std::vector<double> joint(seed_joint.begin(), seed_joint.end());
+    ctx.state.setJointGroupPositions(jmg, joint);
+    ctx.state.enforceBounds(jmg);
+    ctx.state.update();
+    ctx.result.clear();
+    scene->checkSelfCollision(request, ctx.result, ctx.state);
+    if (ctx.result.collision)
+    {
+      return false;
+    }
+
+    const double max_cart_step = 2.0 * grid.voxel_size;
+    const double max_joint_step = 0.25;
+    for (int step = 0; step <= cfg.frontier_dls_steps; ++step)
+    {
+      const Eigen::Isometry3d& tf = ctx.state.getGlobalLinkTransform(cfg.ee_link);
+      const Eigen::Vector3d current = tf.translation();
+      size_t current_voxel = 0;
+      if (voxelIndexForPosition(grid, current, current_voxel) && current_voxel == target_voxel)
+      {
+        Eigen::Quaterniond quat(tf.rotation());
+        quat.normalize();
+        sample_out = sample_from_state(ctx, static_cast<uint64_t>(target_voxel),
+                                       nearestOrientationBin(quat, orientation_bins));
+        return true;
+      }
+      if (step == cfg.frontier_dls_steps)
+      {
+        break;
+      }
+
+      Eigen::Vector3d error = target - current;
+      const double err_norm = error.norm();
+      if (err_norm > max_cart_step && err_norm > 1e-12)
+      {
+        error *= max_cart_step / err_norm;
+      }
+
+      Eigen::MatrixXd jacobian;
+      if (!ctx.state.getJacobian(jmg, ee_link_model, Eigen::Vector3d::Zero(), jacobian))
+      {
+        return false;
+      }
+      if (jacobian.rows() < 3 || jacobian.cols() != static_cast<int>(joint_count))
+      {
+        return false;
+      }
+      const Eigen::MatrixXd jp = jacobian.topRows(3);
+      const Eigen::Matrix3d damped =
+          jp * jp.transpose() + cfg.frontier_dls_lambda * cfg.frontier_dls_lambda * Eigen::Matrix3d::Identity();
+      Eigen::VectorXd dq = jp.transpose() * damped.ldlt().solve(error);
+      const double dq_norm = dq.norm();
+      if (dq_norm > max_joint_step && dq_norm > 1e-12)
+      {
+        dq *= max_joint_step / dq_norm;
+      }
+
+      ctx.state.copyJointGroupPositions(jmg, joint);
+      for (size_t j = 0; j < joint_count; ++j)
+      {
+        joint[j] += dq[static_cast<int>(j)];
+      }
+      ctx.state.setJointGroupPositions(jmg, joint);
+      ctx.state.enforceBounds(jmg);
+      ctx.state.update();
+      ctx.result.clear();
+      scene->checkSelfCollision(request, ctx.result, ctx.state);
+      if (ctx.result.collision)
+      {
+        return false;
+      }
+    }
+    return false;
+  };
+
+  if (cfg.frontier_max_passes > 0 && collect_reservoir_samples && !reservoirs.empty())
+  {
+    for (int pass = 0; pass < cfg.frontier_max_passes; ++pass)
+    {
+      std::vector<size_t> frontier;
+      frontier.reserve(std::max<size_t>(1024, occupied_voxels / 16));
+      for (size_t x = 0; x < grid.nx; ++x)
+      {
+        for (size_t y = 0; y < grid.ny; ++y)
+        {
+          for (size_t z_idx = 0; z_idx < grid.nz; ++z_idx)
+          {
+            const size_t idx = grid.index(x, y, z_idx);
+            if (voxel_counts[idx] != 0)
+            {
+              continue;
+            }
+            bool adjacent = false;
+            for (const auto& off : frontier_offsets)
+            {
+              const int nx = static_cast<int>(x) + off[0];
+              const int ny = static_cast<int>(y) + off[1];
+              const int nz = static_cast<int>(z_idx) + off[2];
+              if (nx < 0 || ny < 0 || nz < 0 || nx >= static_cast<int>(grid.nx) ||
+                  ny >= static_cast<int>(grid.ny) || nz >= static_cast<int>(grid.nz))
+              {
+                continue;
+              }
+              const size_t nidx =
+                  grid.index(static_cast<size_t>(nx), static_cast<size_t>(ny), static_cast<size_t>(nz));
+              if (voxel_counts[nidx] != 0)
+              {
+                adjacent = true;
+                break;
+              }
+            }
+            if (adjacent)
+            {
+              frontier.push_back(idx);
+            }
+          }
+        }
+      }
+
+      RCLCPP_INFO(logger, "Frontier pass %d/%d: candidates=%zu", pass + 1, cfg.frontier_max_passes,
+                  frontier.size());
+      if (frontier.empty())
+      {
+        break;
+      }
+
+      std::vector<SampleBuffer> frontier_buffers(static_cast<size_t>(thread_count));
+      const size_t reserve_count = std::max<size_t>(1, frontier.size() / static_cast<size_t>(thread_count));
+      for (auto& buffer : frontier_buffers)
+      {
+        buffer.clear();
+        buffer.reserve(reserve_count, joint_count);
+      }
+      const auto& reservoir_ref = reservoirs;
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+      for (int fi = 0; fi < static_cast<int>(frontier.size()); ++fi)
+      {
+        int tid = 0;
+#ifdef _OPENMP
+        tid = omp_get_thread_num();
+#endif
+        auto& ctx = thread_contexts[static_cast<size_t>(tid)];
+        const size_t idx = frontier[static_cast<size_t>(fi)];
+        const size_t x = idx / (grid.ny * grid.nz);
+        const size_t rem = idx % (grid.ny * grid.nz);
+        const size_t y = rem / grid.nz;
+        const size_t z_idx = rem % grid.nz;
+
+        std::vector<std::vector<float>> seeds;
+        seeds.reserve(static_cast<size_t>(cfg.frontier_seed_trials));
+        for (const auto& off : frontier_offsets)
+        {
+          if (static_cast<int>(seeds.size()) >= cfg.frontier_seed_trials)
+          {
+            break;
+          }
+          const int nx = static_cast<int>(x) + off[0];
+          const int ny = static_cast<int>(y) + off[1];
+          const int nz = static_cast<int>(z_idx) + off[2];
+          if (nx < 0 || ny < 0 || nz < 0 || nx >= static_cast<int>(grid.nx) ||
+              ny >= static_cast<int>(grid.ny) || nz >= static_cast<int>(grid.nz))
+          {
+            continue;
+          }
+          const size_t nidx = grid.index(static_cast<size_t>(nx), static_cast<size_t>(ny), static_cast<size_t>(nz));
+          const auto it = reservoir_ref.find(static_cast<uint64_t>(nidx));
+          if (it == reservoir_ref.end())
+          {
+            continue;
+          }
+          for (const auto& s : it->second.samples)
+          {
+            seeds.emplace_back(s.joint.begin(), s.joint.begin() + s.joint_count);
+            if (static_cast<int>(seeds.size()) >= cfg.frontier_seed_trials)
+            {
+              break;
+            }
+          }
+        }
+        if (seeds.empty())
+        {
+          continue;
+        }
+
+        std::vector<Eigen::Vector3d> targets;
+        targets.reserve(static_cast<size_t>(cfg.frontier_targets_per_voxel));
+        targets.push_back(grid.center(x, y, z_idx));
+        for (int ti = 1; ti < cfg.frontier_targets_per_voxel; ++ti)
+        {
+          const uint64_t jitter_key = cfg.frontier_jitter_seed ^ static_cast<uint64_t>(idx) ^
+                                      (static_cast<uint64_t>(ti) * 0x9e3779b97f4a7c15ULL);
+          const double jx = (hashUnit(jitter_key ^ (static_cast<uint64_t>(ti) << 17)) - 0.5) *
+                            0.70 * grid.voxel_size;
+          const double jy = (hashUnit(jitter_key ^ (static_cast<uint64_t>(ti) << 29)) - 0.5) *
+                            0.70 * grid.voxel_size;
+          const double jz = (hashUnit(jitter_key ^ (static_cast<uint64_t>(ti) << 41)) - 0.5) *
+                            0.70 * grid.voxel_size;
+          targets.push_back(grid.center(x, y, z_idx) + Eigen::Vector3d(jx, jy, jz));
+        }
+
+        StoredSample success;
+        bool ok = false;
+        for (const auto& target : targets)
+        {
+          for (const auto& seed : seeds)
+          {
+            if (try_frontier_dls(target, idx, seed, ctx, success))
+            {
+              ok = true;
+              break;
+            }
+          }
+          if (ok)
+          {
+            break;
+          }
+        }
+        if (!ok)
+        {
+          continue;
+        }
+        SampleBuffer& buffer = frontier_buffers[static_cast<size_t>(tid)];
+        buffer.positions.insert(buffer.positions.end(), success.pos.begin(), success.pos.end());
+        buffer.quats.insert(buffer.quats.end(), success.quat.begin(), success.quat.end());
+        buffer.joints.insert(buffer.joints.end(), success.joint.begin(), success.joint.begin() + success.joint_count);
+        buffer.voxels.push_back(static_cast<uint64_t>(idx));
+        buffer.orientation_bin.push_back(success.orientation_bin);
+      }
+
+      size_t pass_added = 0;
+      for (auto& buffer : frontier_buffers)
+      {
+        for (size_t i = 0; i < buffer.size(); ++i)
+        {
+          const uint64_t voxel_id = buffer.voxels[i];
+          if (voxel_id >= grid_size)
+          {
+            continue;
+          }
+          if (voxel_counts[static_cast<size_t>(voxel_id)] == 0)
+          {
+            ++occupied_voxels;
+            ++pass_added;
+          }
+          ++voxel_counts[static_cast<size_t>(voxel_id)];
+          setOrientationBit(orientation_bits, orientation_words, static_cast<size_t>(voxel_id),
+                            buffer.orientation_bin[i]);
+          StoredSample sample;
+          sample.pos = { buffer.positions[i * 3], buffer.positions[i * 3 + 1], buffer.positions[i * 3 + 2] };
+          sample.quat = { buffer.quats[i * 4], buffer.quats[i * 4 + 1], buffer.quats[i * 4 + 2],
+                          buffer.quats[i * 4 + 3] };
+          sample.joint_count = static_cast<uint8_t>(joint_count);
+          for (size_t j = 0; j < joint_count; ++j)
+          {
+            sample.joint[j] = buffer.joints[i * joint_count + j];
+          }
+          sample.orientation_bin = buffer.orientation_bin[i];
+          const auto before_it = reservoirs.find(voxel_id);
+          const size_t before = before_it == reservoirs.end() ? 0 : before_it->second.samples.size();
+          addReservoirSample(reservoirs, voxel_id, sample, static_cast<size_t>(cfg.voxel_reservoir_max));
+          const auto after_it = reservoirs.find(voxel_id);
+          const size_t after = after_it == reservoirs.end() ? 0 : after_it->second.samples.size();
+          if (after > before)
+          {
+            reservoir_sample_count += after - before;
+          }
+          ++fk_kept;
+        }
+      }
+      frontier_added_total += pass_added;
+      fk_stored = reservoir_sample_count;
+      RCLCPP_INFO(logger, "Frontier pass %d/%d: accepted_new=%zu occupied=%zu reservoir_samples=%zu",
+                  pass + 1, cfg.frontier_max_passes, pass_added, occupied_voxels, fk_stored);
+      if (pass_added == 0)
+      {
+        break;
+      }
+    }
+  }
+  else if (cfg.frontier_max_passes > 0)
+  {
+    RCLCPP_WARN(logger, "Frontier skipped: reservoir samples are required for warm-start seeds.");
+  }
+  RCLCPP_INFO(logger, "Frontier total accepted_new=%zu", frontier_added_total);
 
   if (fk_kept == 0)
   {
@@ -1915,7 +2509,7 @@ int main(int argc, char** argv)
 
   for (size_t i = 0; i < grid_size; ++i)
   {
-    if (voxel_counts[i].load(std::memory_order_relaxed) > 0)
+    if (voxel_counts[i] > 0)
     {
       labels[i] = static_cast<uint8_t>(CellLabel::kInside);
       ++inside_count;
@@ -2066,8 +2660,76 @@ int main(int argc, char** argv)
     voxel_counts_out.resize(grid_size, 0);
     for (size_t i = 0; i < grid_size; ++i)
     {
-      voxel_counts_out[i] = voxel_counts[i].load(std::memory_order_relaxed);
+      voxel_counts_out[i] = voxel_counts[i];
     }
+  }
+
+  std::vector<uint32_t> voxel_sample_counts_out;
+  if (cfg.write_hdf5 && cfg.write_fk_samples)
+  {
+    voxel_sample_counts_out.resize(grid_size, 0);
+  }
+
+  auto append_reservoir_buffer = [&](SampleBuffer& buffer) -> bool {
+    if (buffer.size() == 0)
+    {
+      return true;
+    }
+    if (write_samples_hdf5 && !hdf5_writer.appendSamples(buffer))
+    {
+      return false;
+    }
+    buffer.clear();
+    return true;
+  };
+
+  SampleBuffer reservoir_write_buffer;
+  if (cfg.write_fk_samples)
+  {
+    reservoir_write_buffer.reserve(std::max<size_t>(1, cfg.hdf5_chunk), joint_count);
+  }
+  if (cfg.write_fk_samples)
+  {
+    for (const auto& item : reservoirs)
+    {
+      const uint64_t voxel_id = item.first;
+      if (voxel_id < grid_size && !voxel_sample_counts_out.empty())
+      {
+        voxel_sample_counts_out[static_cast<size_t>(voxel_id)] =
+            static_cast<uint32_t>(item.second.samples.size());
+      }
+      for (const auto& sample : item.second.samples)
+      {
+        reservoir_write_buffer.positions.insert(reservoir_write_buffer.positions.end(), sample.pos.begin(),
+                                                sample.pos.end());
+        reservoir_write_buffer.quats.insert(reservoir_write_buffer.quats.end(), sample.quat.begin(),
+                                            sample.quat.end());
+        reservoir_write_buffer.joints.insert(reservoir_write_buffer.joints.end(), sample.joint.begin(),
+                                             sample.joint.begin() + sample.joint_count);
+        reservoir_write_buffer.voxels.push_back(voxel_id);
+        reservoir_write_buffer.orientation_bin.push_back(sample.orientation_bin);
+        if (reservoir_write_buffer.size() >= cfg.hdf5_chunk)
+        {
+          if (!append_reservoir_buffer(reservoir_write_buffer))
+          {
+            RCLCPP_ERROR(logger, "Failed to append reservoir HDF5 samples.");
+            hdf5_writer.close();
+            rclcpp::shutdown();
+            return 1;
+          }
+        }
+      }
+    }
+    if (!append_reservoir_buffer(reservoir_write_buffer))
+    {
+      RCLCPP_ERROR(logger, "Failed to append reservoir HDF5 samples.");
+      hdf5_writer.close();
+      rclcpp::shutdown();
+      return 1;
+    }
+    fk_stored = hdf5_writer.sample_count;
+    RCLCPP_INFO(logger, "Reservoir samples written: %zu voxels=%zu cap=%d", fk_stored, reservoirs.size(),
+                cfg.voxel_reservoir_max);
   }
 
   if (cfg.write_hdf5)
@@ -2085,6 +2747,11 @@ int main(int argc, char** argv)
       hdf5_writer.writeArray(hdf5_writer.grid_group, "voxel_counts", H5T_STD_U32LE, grid_dims,
                              voxel_counts_out.data());
     }
+    if (!voxel_sample_counts_out.empty())
+    {
+      hdf5_writer.writeArray(hdf5_writer.grid_group, "voxel_sample_counts", H5T_STD_U32LE, grid_dims,
+                             voxel_sample_counts_out.data());
+    }
     if (cfg.write_sdf_grid)
     {
       hdf5_writer.writeArray(hdf5_writer.grid_group, "sdf", H5T_IEEE_F32LE, grid_dims, sdf.data());
@@ -2093,6 +2760,14 @@ int main(int argc, char** argv)
     {
       hdf5_writer.writeArray(hdf5_writer.grid_group, "orientation_coverage", H5T_IEEE_F32LE, grid_dims,
                              orientation_coverage.data());
+    }
+    if (!orientation_bits.empty())
+    {
+      hdf5_writer.writeArray(hdf5_writer.grid_group, "orientation_bits", H5T_STD_U64LE,
+                             { grid.nx, grid.ny, grid.nz, static_cast<hsize_t>(orientation_words) },
+                             orientation_bits.data());
+      hdf5_writer.writeScalarValue<uint64_t>(hdf5_writer.meta_group, "orientation_bit_words", H5T_STD_U64LE,
+                                             static_cast<uint64_t>(orientation_words));
     }
     if (!orientation_bins_out.empty())
     {
@@ -2107,7 +2782,7 @@ int main(int argc, char** argv)
 
     if (write_samples_hdf5)
     {
-      if (!writeCsrToHdf5(hdf5_writer, grid, voxel_counts_out, logger))
+      if (!writeCsrToHdf5(hdf5_writer, grid, voxel_sample_counts_out, logger))
       {
         hdf5_writer.close();
         rclcpp::shutdown();

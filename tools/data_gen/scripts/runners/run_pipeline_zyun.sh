@@ -7,6 +7,7 @@ set -euo pipefail
 # ---------- 用户可按需修改 ----------
 ROS_DISTRO=humble
 WORKSPACE="/home/user/Zyun/ros2_workspace"
+CONDA_ENV_NAME="${CONDA_ENV_NAME:-reachability}"
 
 # 是否编译全工作空间（true/false）
 BUILD_ALL=false
@@ -16,7 +17,8 @@ BUILD_ALL=false
 USE_SYSTEM_ROS_SETUP=false
 
 # 仅构建与数据生成相关的包（更快）
-BUILD_PKGS="reachability_cli"
+# Description / MoveIt config 包也要一起安装进 overlay，package:// mesh 才能正确解析。
+BUILD_PKGS="aubo_description aubo_moveit_config rm_description rm_moveit_config franka_emika_panda franka_emika_panda_moveit_config reachability_cli"
 PKG_NAME="reachability_cli"
 PKG_SRC_DIR="${WORKSPACE}/src/core/reachability_cli"
 PKG_BUILD_DIR="${WORKSPACE}/build/${PKG_NAME}"
@@ -27,12 +29,16 @@ PKG_CACHE_FILE="${PKG_BUILD_DIR}/CMakeCache.txt"
 # 位置采样（生成 dataset.h5）配置
 # Aubo i5:
 # CFG_POS="tools/data_gen/configs/robots/aubo/aubo_i5/position_3mm.yaml"
+# Franka Emika Panda:
+# CFG_POS="tools/data_gen/configs/robots/franka_emika_panda/panda/position_3mm.yaml"
 # RealMan RM65:
 CFG_POS="tools/data_gen/configs/robots/realman/rm65/position_3mm.yaml"
 
 # 姿态采样（生成 dataset_orient.h5）配置
 # Aubo i5:
 # CFG_ORIENT="tools/data_gen/configs/robots/aubo/aubo_i5/orientation_3mm.yaml"
+# Franka Emika Panda:
+# CFG_ORIENT="tools/data_gen/configs/robots/franka_emika_panda/panda/orientation_3mm.yaml"
 # RealMan RM65:
 CFG_ORIENT="tools/data_gen/configs/robots/realman/rm65/orientation_3mm.yaml"
 
@@ -104,6 +110,16 @@ set +u
 source "${WORKSPACE}/install/setup.bash"
 set -u
 
+# 生成后的可视化脚本依赖 NumPy / HDF5 / Matplotlib，优先使用专门的 Conda 环境。
+VIS_PYTHON=(python3)
+if [ "${RUN_VIS}" = true ] && command -v conda >/dev/null 2>&1; then
+  eval "$(conda shell.bash hook 2>/dev/null)" || true
+  if conda run -n "${CONDA_ENV_NAME}" python -c "import h5py, matplotlib, numpy" >/dev/null 2>&1; then
+    echo "[info] Using Conda env ${CONDA_ENV_NAME} for visualization scripts"
+    VIS_PYTHON=(conda run --no-capture-output -n "${CONDA_ENV_NAME}" python)
+  fi
+fi
+
 # 6) 位置采样（生成 dataset.h5）
 if [ "${RUN_POS}" = true ]; then
   ros2 run reachability_cli dataset_generator_cli --config "${CFG_POS}"
@@ -116,7 +132,7 @@ fi
 
 # 8) 可视化（按需开启）
 if [ "${RUN_VIS}" = true ]; then
-  python3 tools/data_gen/scripts/visualize/plot_occupancy_voxels.py
-  python3 tools/data_gen/scripts/visualize/plot_orient_samples.py
-  python3 tools/data_gen/scripts/visualize/plot_anchor_distribution.py
+  "${VIS_PYTHON[@]}" tools/data_gen/scripts/visualize/plot_occupancy_voxels.py
+  "${VIS_PYTHON[@]}" tools/data_gen/scripts/visualize/plot_orient_samples.py
+  "${VIS_PYTHON[@]}" tools/data_gen/scripts/visualize/plot_anchor_distribution.py
 fi

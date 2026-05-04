@@ -16,13 +16,12 @@
 #include <moveit/robot_state/robot_state.h>
 #include <random_numbers/random_numbers.h>
 
-#include <boost/random/sobol.hpp>
-#include <boost/random/uniform_01.hpp>
-
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <fstream>
 #include <functional>
@@ -32,9 +31,12 @@
 #include <queue>
 #include <random>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
+#include <unordered_map>
 #include <unordered_set>
 
 #ifdef _OPENMP
@@ -46,6 +48,36 @@ namespace
 struct Options
 {
   std::string config_path;
+};
+
+struct QuatGridKey
+{
+  int x = 0;
+  int y = 0;
+  int z = 0;
+  int w = 0;
+
+  bool operator==(const QuatGridKey& other) const
+  {
+    return x == other.x && y == other.y && z == other.z && w == other.w;
+  }
+};
+
+struct QuatGridKeyHash
+{
+  size_t operator()(const QuatGridKey& key) const
+  {
+    size_t h = 1469598103934665603ULL;
+    auto mix = [&](int v) {
+      h ^= static_cast<size_t>(static_cast<uint32_t>(v));
+      h *= 1099511628211ULL;
+    };
+    mix(key.x);
+    mix(key.y);
+    mix(key.z);
+    mix(key.w);
+    return h;
+  }
 };
 
 struct Config
@@ -60,7 +92,7 @@ struct Config
 
   std::string base_h5_path;
 
-  size_t anchors_total = 2000;
+  size_t anchors_total = 1024;
   int candidate_min_count = 3;
   std::array<int, 3> anchor_bins_xyz{ 8, 8, 8 };
   std::array<int, 3> anchor_bins_scr{ 6, 4, 4 };
@@ -76,47 +108,57 @@ struct Config
   double anchor_n0 = 100.0;
   int anchor_neighbor_mode = 6;
 
-  int coarse_min = 4096;
-  int coarse_max = 8192;
-  int knn_k = 16;
-  double d_max = 0.40;
-  std::string d_max_mode = "adaptive";
-  double d_max_factor = 3.0;
-  double d_max_clip_min = 0.25;
-  double d_max_clip_max = 0.60;
+  std::string so3_grid = "hopf";
+  int so3_base_cells = 576;
+  int so3_split_factor = 8;
+  int so3_max_depth = 3;
+  double so3_leaf_radius = 0.04;
+  double so3_stencil_radius_ratio = 0.5;
+  double so3_refine_band = 0.08;
   double delta_boundary = 0.01;
-  size_t max_boundary_edges = 2048;
-  size_t min_boundary_edges = 256;
-  std::vector<double> shell_deltas{ 0.01, 0.02, 0.04, 0.08 };
-  int refine_count = 0;
-  double refine_sigma = 0.03;
+  int boundary_refine_steps = 2;
+  int max_boundary_brackets = 0;
+  std::vector<double> shell_deltas{ 0.02, 0.04 };
+  double phi_full = M_PI;
+  int full_reachable_validation_samples = 1024;
+  uint64_t full_reachable_validation_seed = 20260429ULL;
   int seeds_per_anchor = 32;
   double warm_start_mix = 0.7;
-  bool scramble_per_anchor = false;
-  uint64_t sobol_seed = 0;
   int q_ref_size = 64;
   int q_ref_pool = 4096;
-  int method3_boundary_max = 0;
-  int method3_boundary_min = 0;
-  double method3_min_abs_phi = 0.0;
-  double method3_phi_margin = 0.0;
+  uint64_t q_ref_seed = 20260428ULL;
+  uint64_t anchor_quantile_seed = 2026042801ULL;
+  uint64_t anchor_quota_seed_base = 2026042802ULL;
+  uint64_t anchor_quota_seed_stride = 97ULL;
+  uint64_t anchor_global_seed_base = 2026042803ULL;
+  uint64_t anchor_global_seed_stride = 53ULL;
+  uint64_t thread_seed_base = 2026042804ULL;
+  uint64_t thread_seed_stride = 101ULL;
+  uint64_t fallback_seed_base = 2026042805ULL;
+  uint64_t fallback_seed_stride = 17ULL;
 
-  double ik_timeout = 0.005;
-  int ik_csr_trials = 2;
-  int ik_random_trials = 1;
-  int bisect_csr_trials = 2;
-  int bisect_random_trials = 2;
+  double ik_timeout_coarse = 0.005;
+  int ik_csr_trials_coarse = 2;
+  int ik_random_trials_coarse = 1;
+  double ik_timeout_refine = 0.01;
+  int ik_csr_trials_refine = 3;
+  int ik_random_trials_refine = 2;
+  double ik_timeout_bisect = 0.02;
+  int ik_csr_trials_bisect = 4;
+  int ik_random_trials_bisect = 4;
   double search_discretization = 0.005;
 
   int threads = 0;
 
   int debug_max_anchors = 1;
   int debug_start_anchor = 0;
+  std::vector<int> debug_anchor_indices;
 
   std::string output_path;
   size_t hdf5_chunk = 100000;
   bool write_joint = true;
   bool write_method = true;
+  bool write_cells = true;
   bool write_csr = true;
   bool flush_per_anchor = true;
   bool stream_csr = true;
@@ -166,13 +208,6 @@ struct Seed
   std::vector<double> joint;
 };
 
-struct OrientationSample
-{
-  Eigen::Quaterniond quat;
-  bool reachable = false;
-  std::vector<double> joint;
-};
-
 struct OutputSample
 {
   Eigen::Quaterniond quat;
@@ -180,6 +215,44 @@ struct OutputSample
   int8_t label = 0;
   uint8_t method = 0;
   std::vector<float> joint;
+};
+
+enum class So3CellState : uint8_t
+{
+  kInside = 0,
+  kOutside = 1,
+  kMixed = 2,
+  kUnknown = 3
+};
+
+struct So3Cell
+{
+  int parent = -1;
+  uint8_t level = 0;
+  double radius = 0.0;
+  Eigen::Quaterniond center = Eigen::Quaterniond::Identity();
+  So3CellState state = So3CellState::kUnknown;
+  std::array<Eigen::Quaterniond, 7> stencil_quat{};
+  std::array<int8_t, 7> stencil_label{};
+  std::array<std::vector<double>, 7> stencil_joint{};
+  std::vector<double> center_joint;
+  bool has_center_joint = false;
+  float phi_graph = std::numeric_limits<float>::quiet_NaN();
+};
+
+struct CellOutput
+{
+  Eigen::Quaterniond quat;
+  uint8_t level = 0;
+  uint8_t state = 3;
+  float phi_graph = std::numeric_limits<float>::quiet_NaN();
+};
+
+struct BoundaryBracket
+{
+  Eigen::Quaterniond q_pos = Eigen::Quaterniond::Identity();
+  Eigen::Quaterniond q_neg = Eigen::Quaterniond::Identity();
+  std::vector<double> pos_joint;
 };
 
 bool parseArgs(int argc, char** argv, Options& options)
@@ -339,47 +412,62 @@ Config loadConfig(const std::string& path)
   cfg.anchor_p = getScalar<double>(weight, "p", cfg.anchor_p);
   cfg.anchor_n0 = getScalar<double>(weight, "n0", cfg.anchor_n0);
 
-  cfg.coarse_min = getScalar<int>(sampling, "coarse_min", cfg.coarse_min);
-  cfg.coarse_max = getScalar<int>(sampling, "coarse_max", cfg.coarse_max);
-  cfg.knn_k = getScalar<int>(sampling, "knn_k", cfg.knn_k);
-  cfg.d_max = getScalar<double>(sampling, "d_max", cfg.d_max);
-  cfg.d_max_mode = getScalar<std::string>(sampling, "d_max_mode", cfg.d_max_mode);
-  cfg.d_max_factor = getScalar<double>(sampling, "d_max_factor", cfg.d_max_factor);
-  cfg.d_max_clip_min = getScalar<double>(sampling, "d_max_clip_min", cfg.d_max_clip_min);
-  cfg.d_max_clip_max = getScalar<double>(sampling, "d_max_clip_max", cfg.d_max_clip_max);
+  cfg.so3_grid = getScalar<std::string>(sampling, "so3_grid", cfg.so3_grid);
+  cfg.so3_base_cells = getScalar<int>(sampling, "so3_base_cells", cfg.so3_base_cells);
+  cfg.so3_split_factor = getScalar<int>(sampling, "so3_split_factor", cfg.so3_split_factor);
+  cfg.so3_max_depth = getScalar<int>(sampling, "so3_max_depth", cfg.so3_max_depth);
+  cfg.so3_leaf_radius = getScalar<double>(sampling, "so3_leaf_radius", cfg.so3_leaf_radius);
+  cfg.so3_stencil_radius_ratio =
+      getScalar<double>(sampling, "so3_stencil_radius_ratio", cfg.so3_stencil_radius_ratio);
+  cfg.so3_refine_band = getScalar<double>(sampling, "so3_refine_band", cfg.so3_refine_band);
   cfg.delta_boundary = getScalar<double>(sampling, "delta_boundary", cfg.delta_boundary);
-  cfg.max_boundary_edges = getScalar<size_t>(sampling, "max_boundary_edges", cfg.max_boundary_edges);
-  cfg.min_boundary_edges = getScalar<size_t>(sampling, "min_boundary_edges", cfg.min_boundary_edges);
+  cfg.boundary_refine_steps = getScalar<int>(sampling, "boundary_refine_steps", cfg.boundary_refine_steps);
+  cfg.max_boundary_brackets = getScalar<int>(sampling, "max_boundary_brackets", cfg.max_boundary_brackets);
   cfg.shell_deltas = getDoubleList(sampling, "shell_deltas", cfg.shell_deltas);
-  cfg.refine_count = getScalar<int>(sampling, "refine_count", cfg.refine_count);
-  cfg.refine_sigma = getScalar<double>(sampling, "refine_sigma", cfg.refine_sigma);
+  cfg.phi_full = getScalar<double>(sampling, "phi_full", cfg.phi_full);
+  cfg.full_reachable_validation_samples =
+      getScalar<int>(sampling, "full_reachable_validation_samples", cfg.full_reachable_validation_samples);
+  cfg.full_reachable_validation_seed =
+      getScalar<uint64_t>(sampling, "full_reachable_validation_seed", cfg.full_reachable_validation_seed);
   cfg.seeds_per_anchor = getScalar<int>(sampling, "seeds_per_anchor", cfg.seeds_per_anchor);
   cfg.warm_start_mix = getScalar<double>(sampling, "warm_start_mix", cfg.warm_start_mix);
-  cfg.scramble_per_anchor = getScalar<bool>(sampling, "scramble_per_anchor", cfg.scramble_per_anchor);
-  cfg.sobol_seed = getScalar<uint64_t>(sampling, "sobol_seed", cfg.sobol_seed);
   cfg.q_ref_size = getScalar<int>(sampling, "q_ref_size", cfg.q_ref_size);
   cfg.q_ref_pool = getScalar<int>(sampling, "q_ref_pool", cfg.q_ref_pool);
-  cfg.method3_boundary_max = getScalar<int>(sampling, "method3_boundary_max", cfg.method3_boundary_max);
-  cfg.method3_boundary_min = getScalar<int>(sampling, "method3_boundary_min", cfg.method3_boundary_min);
-  cfg.method3_min_abs_phi = getScalar<double>(sampling, "method3_min_abs_phi", cfg.method3_min_abs_phi);
-  cfg.method3_phi_margin = getScalar<double>(sampling, "method3_phi_margin", cfg.method3_phi_margin);
+  cfg.q_ref_seed = getScalar<uint64_t>(sampling, "q_ref_seed", cfg.q_ref_seed);
+  cfg.anchor_quantile_seed = getScalar<uint64_t>(sampling, "anchor_quantile_seed", cfg.anchor_quantile_seed);
+  cfg.anchor_quota_seed_base = getScalar<uint64_t>(sampling, "anchor_quota_seed_base", cfg.anchor_quota_seed_base);
+  cfg.anchor_quota_seed_stride =
+      getScalar<uint64_t>(sampling, "anchor_quota_seed_stride", cfg.anchor_quota_seed_stride);
+  cfg.anchor_global_seed_base = getScalar<uint64_t>(sampling, "anchor_global_seed_base", cfg.anchor_global_seed_base);
+  cfg.anchor_global_seed_stride =
+      getScalar<uint64_t>(sampling, "anchor_global_seed_stride", cfg.anchor_global_seed_stride);
+  cfg.thread_seed_base = getScalar<uint64_t>(sampling, "thread_seed_base", cfg.thread_seed_base);
+  cfg.thread_seed_stride = getScalar<uint64_t>(sampling, "thread_seed_stride", cfg.thread_seed_stride);
+  cfg.fallback_seed_base = getScalar<uint64_t>(sampling, "fallback_seed_base", cfg.fallback_seed_base);
+  cfg.fallback_seed_stride = getScalar<uint64_t>(sampling, "fallback_seed_stride", cfg.fallback_seed_stride);
 
-  cfg.ik_timeout = getScalar<double>(ik, "timeout", cfg.ik_timeout);
-  cfg.ik_csr_trials = getScalar<int>(ik, "csr_trials", cfg.ik_csr_trials);
-  cfg.ik_random_trials = getScalar<int>(ik, "random_trials", cfg.ik_random_trials);
-  cfg.bisect_csr_trials = getScalar<int>(ik, "bisect_csr_trials", cfg.bisect_csr_trials);
-  cfg.bisect_random_trials = getScalar<int>(ik, "bisect_random_trials", cfg.bisect_random_trials);
+  cfg.ik_timeout_coarse = getScalar<double>(ik, "timeout_coarse", cfg.ik_timeout_coarse);
+  cfg.ik_csr_trials_coarse = getScalar<int>(ik, "csr_trials_coarse", cfg.ik_csr_trials_coarse);
+  cfg.ik_random_trials_coarse = getScalar<int>(ik, "random_trials_coarse", cfg.ik_random_trials_coarse);
+  cfg.ik_timeout_refine = getScalar<double>(ik, "timeout_refine", cfg.ik_timeout_refine);
+  cfg.ik_csr_trials_refine = getScalar<int>(ik, "csr_trials_refine", cfg.ik_csr_trials_refine);
+  cfg.ik_random_trials_refine = getScalar<int>(ik, "random_trials_refine", cfg.ik_random_trials_refine);
+  cfg.ik_timeout_bisect = getScalar<double>(ik, "timeout_bisect", cfg.ik_timeout_bisect);
+  cfg.ik_csr_trials_bisect = getScalar<int>(ik, "csr_trials_bisect", cfg.ik_csr_trials_bisect);
+  cfg.ik_random_trials_bisect = getScalar<int>(ik, "random_trials_bisect", cfg.ik_random_trials_bisect);
   cfg.search_discretization = getScalar<double>(ik, "search_discretization", cfg.search_discretization);
 
   cfg.threads = getScalar<int>(threads, "count", cfg.threads);
 
   cfg.debug_max_anchors = getScalar<int>(debug, "max_anchors", cfg.debug_max_anchors);
   cfg.debug_start_anchor = getScalar<int>(debug, "start_anchor", cfg.debug_start_anchor);
+  cfg.debug_anchor_indices = getIntList(debug, "anchor_indices", {});
 
   cfg.output_path = getRequiredScalar<std::string>(output, "path");
   cfg.hdf5_chunk = getScalar<size_t>(output, "hdf5_chunk", cfg.hdf5_chunk);
   cfg.write_joint = getScalar<bool>(output, "write_joint", cfg.write_joint);
   cfg.write_method = getScalar<bool>(output, "write_method", cfg.write_method);
+  cfg.write_cells = getScalar<bool>(output, "write_cells", cfg.write_cells);
   cfg.write_csr = getScalar<bool>(output, "write_csr", cfg.write_csr);
   cfg.flush_per_anchor = getScalar<bool>(output, "flush_per_anchor", cfg.flush_per_anchor);
   cfg.stream_csr = getScalar<bool>(output, "stream_csr", cfg.stream_csr);
@@ -485,23 +573,59 @@ std::string readStringDataset(hid_t file, const std::string& path, const std::st
   return out;
 }
 
-Eigen::Quaterniond sampleUniformQuaternion(random_numbers::RandomNumberGenerator& rng)
+bool datasetExists(hid_t file, const std::string& path)
 {
-  const double u1 = rng.uniformReal(0.0, 1.0);
-  const double u2 = rng.uniformReal(0.0, 1.0);
-  const double u3 = rng.uniformReal(0.0, 1.0);
+  H5E_auto2_t old_func = nullptr;
+  void* old_client_data = nullptr;
+  H5Eget_auto2(H5E_DEFAULT, &old_func, &old_client_data);
+  H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
+  hid_t dset = H5Dopen2(file, path.c_str(), H5P_DEFAULT);
+  H5Eset_auto2(H5E_DEFAULT, old_func, old_client_data);
+  if (dset < 0)
+  {
+    return false;
+  }
+  H5Dclose(dset);
+  return true;
+}
 
-  const double sqrt1 = std::sqrt(1.0 - u1);
-  const double sqrt2 = std::sqrt(u1);
-  const double theta1 = 2.0 * M_PI * u2;
-  const double theta2 = 2.0 * M_PI * u3;
+int nearestCoverageBin(const Eigen::Quaterniond& quat, const std::vector<std::array<float, 4>>& bins)
+{
+  if (bins.empty())
+  {
+    return -1;
+  }
+  const Eigen::Quaterniond q = quat.normalized();
+  const float qx = static_cast<float>(q.x());
+  const float qy = static_cast<float>(q.y());
+  const float qz = static_cast<float>(q.z());
+  const float qw = static_cast<float>(q.w());
+  float best = -1.0f;
+  int best_idx = 0;
+  for (int i = 0; i < static_cast<int>(bins.size()); ++i)
+  {
+    const auto& b = bins[static_cast<size_t>(i)];
+    float dot = qx * b[0] + qy * b[1] + qz * b[2] + qw * b[3];
+    if (dot < 0.0f)
+    {
+      dot = -dot;
+    }
+    if (dot > best)
+    {
+      best = dot;
+      best_idx = i;
+    }
+  }
+  return best_idx;
+}
 
-  const double x = sqrt1 * std::sin(theta1);
-  const double y = sqrt1 * std::cos(theta1);
-  const double z = sqrt2 * std::sin(theta2);
-  const double w = sqrt2 * std::cos(theta2);
-
-  return Eigen::Quaterniond(w, x, y, z);
+void setBit(std::vector<uint8_t>& bits, size_t row, size_t cols, size_t col)
+{
+  if (cols == 0 || row >= bits.size() / cols || col >= cols)
+  {
+    return;
+  }
+  bits[row * cols + col] = 1;
 }
 
 Eigen::Quaterniond canonicalizeQuat(const Eigen::Quaterniond& q)
@@ -512,6 +636,13 @@ Eigen::Quaterniond canonicalizeQuat(const Eigen::Quaterniond& q)
     out.coeffs() *= -1.0;
   }
   return out;
+}
+
+int toRosRngSeed(uint64_t seed)
+{
+  constexpr uint64_t kMaxSeed = static_cast<uint64_t>(std::numeric_limits<int>::max());
+  const int out = static_cast<int>(seed % kMaxSeed);
+  return out == 0 ? 1 : out;
 }
 
 double geodesicDistance(const Eigen::Quaterniond& a, const Eigen::Quaterniond& b)
@@ -525,219 +656,63 @@ double geodesicDistance(const Eigen::Quaterniond& a, const Eigen::Quaterniond& b
   return 2.0 * std::acos(dot);
 }
 
-Eigen::Quaterniond sampleShoemake(double u1, double u2, double u3)
+Eigen::Quaterniond sampleUniformQuaternion(std::mt19937_64& rng)
 {
+  std::uniform_real_distribution<double> unit(0.0, 1.0);
+  const double u1 = unit(rng);
+  const double u2 = unit(rng);
+  const double u3 = unit(rng);
   const double sqrt1 = std::sqrt(1.0 - u1);
   const double sqrt2 = std::sqrt(u1);
   const double theta1 = 2.0 * M_PI * u2;
   const double theta2 = 2.0 * M_PI * u3;
-
-  const double x = sqrt1 * std::sin(theta1);
-  const double y = sqrt1 * std::cos(theta1);
-  const double z = sqrt2 * std::sin(theta2);
-  const double w = sqrt2 * std::cos(theta2);
-  return Eigen::Quaterniond(w, x, y, z);
+  Eigen::Quaterniond q(sqrt2 * std::cos(theta2), sqrt1 * std::sin(theta1), sqrt1 * std::cos(theta1),
+                       sqrt2 * std::sin(theta2));
+  q.normalize();
+  return canonicalizeQuat(q);
 }
 
-std::vector<Eigen::Quaterniond> generateSobolQuats(size_t count, uint64_t seed, bool canonicalize)
+std::vector<Eigen::Quaterniond> selectFarthestQuats(const std::vector<Eigen::Quaterniond>& quats, int max_count);
+
+std::vector<Eigen::Quaterniond> generateHopfQuats(size_t count, uint64_t seed)
 {
-  boost::random::sobol sobol(3);
-  if (seed != 0)
+  const size_t pool_target = std::max<size_t>(count * 8, 1024);
+  size_t n_theta = 4;
+  size_t n_phi = 8;
+  size_t n_psi = 8;
+  while (n_theta * n_phi * n_psi < pool_target)
   {
-    sobol.seed(seed);
+    n_theta += 2;
+    n_phi += 4;
+    n_psi += 4;
   }
-  boost::random::uniform_01<double> u01;
 
-  std::vector<Eigen::Quaterniond> quats;
-  quats.reserve(count);
-  for (size_t i = 0; i < count; ++i)
+  std::vector<Eigen::Quaterniond> pool;
+  pool.reserve(n_theta * n_phi * n_psi);
+  const double seed_shift = static_cast<double>(seed % 9973) / 9973.0;
+  for (size_t i = 0; i < n_theta; ++i)
   {
-    const double u1 = u01(sobol);
-    const double u2 = u01(sobol);
-    const double u3 = u01(sobol);
-    Eigen::Quaterniond q = sampleShoemake(u1, u2, u3);
-    q.normalize();
-    if (canonicalize)
+    const double u = (static_cast<double>(i) + 0.5) / static_cast<double>(n_theta);
+    const double theta = std::asin(std::sqrt(std::min(1.0, std::max(0.0, u))));
+    const double ct = std::cos(theta);
+    const double st = std::sin(theta);
+    for (size_t j = 0; j < n_phi; ++j)
     {
-      q = canonicalizeQuat(q);
-    }
-    quats.push_back(q);
-  }
-  return quats;
-}
-
-struct KNNGraph
-{
-  int k = 0;
-  std::vector<std::vector<int>> neighbors;
-  std::vector<std::vector<float>> distances;
-  double median_edge = 0.0;
-};
-
-struct SampleSet
-{
-  std::vector<Eigen::Quaterniond> quats;
-  KNNGraph knn;
-};
-
-KNNGraph buildKNNGraph(const std::vector<Eigen::Quaterniond>& quats, int k, int thread_count)
-{
-  KNNGraph graph;
-  graph.k = k;
-  const size_t n = quats.size();
-  graph.neighbors.assign(n, std::vector<int>());
-  graph.distances.assign(n, std::vector<float>());
-  if (n == 0 || k <= 0)
-  {
-    return graph;
-  }
-
-  const int kk = std::min(static_cast<int>(n) - 1, k);
-  graph.k = kk;
-  graph.neighbors.assign(n, std::vector<int>(static_cast<size_t>(kk), -1));
-  graph.distances.assign(n, std::vector<float>(static_cast<size_t>(kk), 0.0f));
-
-#pragma omp parallel for schedule(static) num_threads(thread_count)
-  for (int i = 0; i < static_cast<int>(n); ++i)
-  {
-    std::vector<std::pair<double, int>> heap;
-    heap.reserve(static_cast<size_t>(kk));
-    const Eigen::Quaterniond& qi = quats[static_cast<size_t>(i)];
-    for (int j = 0; j < static_cast<int>(n); ++j)
-    {
-      if (i == j)
+      const double phi = 2.0 * M_PI * std::fmod((static_cast<double>(j) + 0.5) / static_cast<double>(n_phi) +
+                                                    0.5 * seed_shift,
+                                                1.0);
+      for (size_t k = 0; k < n_psi; ++k)
       {
-        continue;
-      }
-      const double d = geodesicDistance(qi, quats[static_cast<size_t>(j)]);
-      if (static_cast<int>(heap.size()) < kk)
-      {
-        heap.emplace_back(d, j);
-        std::push_heap(heap.begin(), heap.end(),
-                       [](const auto& a, const auto& b) { return a.first < b.first; });
-      }
-      else if (!heap.empty() && d < heap.front().first)
-      {
-        std::pop_heap(heap.begin(), heap.end(),
-                      [](const auto& a, const auto& b) { return a.first < b.first; });
-        heap.back() = { d, j };
-        std::push_heap(heap.begin(), heap.end(),
-                       [](const auto& a, const auto& b) { return a.first < b.first; });
-      }
-    }
-    std::sort(heap.begin(), heap.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-    for (int t = 0; t < kk; ++t)
-    {
-      graph.neighbors[static_cast<size_t>(i)][static_cast<size_t>(t)] = heap[static_cast<size_t>(t)].second;
-      graph.distances[static_cast<size_t>(i)][static_cast<size_t>(t)] =
-          static_cast<float>(heap[static_cast<size_t>(t)].first);
-    }
-  }
-
-  std::vector<double> all_dist;
-  all_dist.reserve(n * static_cast<size_t>(graph.k));
-  for (size_t i = 0; i < n; ++i)
-  {
-    for (int t = 0; t < graph.k; ++t)
-    {
-      all_dist.push_back(graph.distances[i][static_cast<size_t>(t)]);
-    }
-  }
-  if (!all_dist.empty())
-  {
-    const size_t mid = all_dist.size() / 2;
-    std::nth_element(all_dist.begin(), all_dist.begin() + static_cast<long>(mid), all_dist.end());
-    graph.median_edge = all_dist[mid];
-  }
-  return graph;
-}
-
-double resolveDmax(const Config& cfg, const KNNGraph& graph)
-{
-  if (cfg.d_max_mode == "adaptive")
-  {
-    const double val = cfg.d_max_factor * graph.median_edge;
-    return std::min(cfg.d_max_clip_max, std::max(cfg.d_max_clip_min, val));
-  }
-  return cfg.d_max;
-}
-
-std::vector<float> graphDistance(const KNNGraph& graph, const std::vector<int8_t>& labels, size_t n_used,
-                                 double d_max, size_t* boundary_count)
-{
-  std::vector<float> dist(n_used, std::numeric_limits<float>::infinity());
-  if (n_used == 0 || graph.k <= 0)
-  {
-    return dist;
-  }
-  std::vector<uint8_t> is_boundary(n_used, 0);
-  for (size_t i = 0; i < n_used; ++i)
-  {
-    for (int t = 0; t < graph.k; ++t)
-    {
-      const int j = graph.neighbors[i][static_cast<size_t>(t)];
-      if (j < 0 || static_cast<size_t>(j) >= n_used)
-      {
-        continue;
-      }
-      const float w = graph.distances[i][static_cast<size_t>(t)];
-      if (d_max > 0.0 && w > d_max)
-      {
-        continue;
-      }
-      if (labels[i] != labels[static_cast<size_t>(j)])
-      {
-        is_boundary[i] = 1;
-        break;
+        const double psi = 2.0 * M_PI * std::fmod((static_cast<double>(k) + 0.5) / static_cast<double>(n_psi) +
+                                                    0.25 * seed_shift,
+                                                1.0);
+        Eigen::Quaterniond q(ct * std::cos(phi), ct * std::sin(phi), st * std::cos(psi), st * std::sin(psi));
+        q.normalize();
+        pool.push_back(canonicalizeQuat(q));
       }
     }
   }
-
-  size_t boundary_nodes = 0;
-  for (size_t i = 0; i < n_used; ++i)
-  {
-    boundary_nodes += is_boundary[i] ? 1 : 0;
-  }
-  if (boundary_count)
-  {
-    *boundary_count = boundary_nodes;
-  }
-
-  using Node = std::pair<float, int>;
-  std::priority_queue<Node, std::vector<Node>, std::greater<Node>> pq;
-  for (size_t i = 0; i < n_used; ++i)
-  {
-    if (is_boundary[i])
-    {
-      dist[i] = 0.0f;
-      pq.emplace(0.0f, static_cast<int>(i));
-    }
-  }
-  while (!pq.empty())
-  {
-    const auto [d, i] = pq.top();
-    pq.pop();
-    if (d > dist[static_cast<size_t>(i)])
-    {
-      continue;
-    }
-    for (int t = 0; t < graph.k; ++t)
-    {
-      const int j = graph.neighbors[static_cast<size_t>(i)][static_cast<size_t>(t)];
-      if (j < 0 || static_cast<size_t>(j) >= n_used)
-      {
-        continue;
-      }
-      const float w = graph.distances[static_cast<size_t>(i)][static_cast<size_t>(t)];
-      const float nd = d + w;
-      if (nd < dist[static_cast<size_t>(j)])
-      {
-        dist[static_cast<size_t>(j)] = nd;
-        pq.emplace(nd, j);
-      }
-    }
-  }
-  return dist;
+  return selectFarthestQuats(pool, static_cast<int>(count));
 }
 
 Eigen::Quaterniond slerpShortest(const Eigen::Quaterniond& a, const Eigen::Quaterniond& b, double t)
@@ -763,48 +738,29 @@ Eigen::Quaterniond expMapSO3(const Eigen::Vector3d& w)
   return Eigen::Quaterniond(std::cos(half), axis.x() * s, axis.y() * s, axis.z() * s);
 }
 
-const OrientationSample* nearestSample(const std::vector<OrientationSample>& samples, const Eigen::Quaterniond& q)
+std::array<Eigen::Quaterniond, 7> makeStencil(const Eigen::Quaterniond& center, double rho)
 {
-  if (samples.empty())
+  std::array<Eigen::Quaterniond, 7> out{};
+  out[0] = center.normalized();
+  const std::array<Eigen::Vector3d, 6> offsets = {
+    Eigen::Vector3d(rho, 0.0, 0.0),  Eigen::Vector3d(-rho, 0.0, 0.0),
+    Eigen::Vector3d(0.0, rho, 0.0),  Eigen::Vector3d(0.0, -rho, 0.0),
+    Eigen::Vector3d(0.0, 0.0, rho),  Eigen::Vector3d(0.0, 0.0, -rho),
+  };
+  for (size_t i = 0; i < offsets.size(); ++i)
   {
-    return nullptr;
+    Eigen::Quaterniond q = expMapSO3(offsets[i]) * center;
+    q.normalize();
+    out[i + 1] = q;
   }
-  double best = std::numeric_limits<double>::infinity();
-  size_t best_idx = 0;
-  for (size_t i = 0; i < samples.size(); ++i)
-  {
-    const double d = geodesicDistance(samples[i].quat, q);
-    if (d < best)
-    {
-      best = d;
-      best_idx = i;
-    }
-  }
-  return &samples[best_idx];
+  return out;
 }
 
-int findBin(double value, const std::vector<double>& bins)
+Eigen::Quaterniond offsetQuat(const Eigen::Quaterniond& center, const Eigen::Vector3d& offset)
 {
-  if (bins.size() < 2)
-  {
-    return -1;
-  }
-  if (value <= bins.front())
-  {
-    return 0;
-  }
-  if (value >= bins.back())
-  {
-    return static_cast<int>(bins.size() - 2);
-  }
-  for (size_t i = 0; i + 1 < bins.size(); ++i)
-  {
-    if (value > bins[i] && value <= bins[i + 1])
-    {
-      return static_cast<int>(i);
-    }
-  }
-  return -1;
+  Eigen::Quaterniond q = expMapSO3(offset) * center;
+  q.normalize();
+  return canonicalizeQuat(q);
 }
 
 int binIndex01(double value, int bins)
@@ -918,22 +874,38 @@ size_t nearestSeedIndex(const std::vector<Seed>& seeds, const Eigen::Quaterniond
 
 struct ThreadContext
 {
+  reachability_cli::RobotContext robot;
+  const moveit::core::JointModelGroup* jmg = nullptr;
+  planning_scene::PlanningScenePtr scene;
+  collision_detection::CollisionRequest request;
   moveit::core::RobotState state;
   collision_detection::CollisionResult result;
   random_numbers::RandomNumberGenerator rng;
   std::vector<double> joint_positions;
 
-  ThreadContext(const moveit::core::RobotModelPtr& model, int seed, size_t joint_count)
-    : state(model), rng(seed), joint_positions(joint_count, 0.0)
+  ThreadContext(reachability_cli::RobotContext robot_context, const moveit::core::JointModelGroup* group, int seed,
+                size_t joint_count, const std::string& group_name)
+    : robot(std::move(robot_context))
+    , jmg(group)
+    , scene(robot.scene)
+    , state(robot.model)
+    , rng(seed)
+    , joint_positions(joint_count, 0.0)
   {
+    if (!jmg)
+    {
+      throw std::runtime_error("ThreadContext received null JointModelGroup");
+    }
+    request.group_name = group_name;
+    request.contacts = false;
+    request.max_contacts = 0;
     state.setToDefaultValues();
   }
 };
 
 bool evaluateIK(const Eigen::Vector3d& pos, const Eigen::Quaterniond& quat, const std::string& ee_link,
-                const moveit::core::JointModelGroup* jmg, planning_scene::PlanningScenePtr scene,
-                collision_detection::CollisionRequest& request, ThreadContext& ctx, const std::vector<Seed>& seeds,
-                double warm_start_mix, int csr_trials, int random_trials, double timeout, std::vector<double>& solution)
+                ThreadContext& ctx, const std::vector<Seed>& seeds, double warm_start_mix, int csr_trials,
+                int random_trials, double timeout, std::vector<double>& solution)
 {
   geometry_msgs::msg::Pose pose;
   pose.position.x = pos.x();
@@ -947,29 +919,29 @@ bool evaluateIK(const Eigen::Vector3d& pos, const Eigen::Quaterniond& quat, cons
   auto try_seed = [&](const std::vector<double>* seed) -> bool {
     if (seed)
     {
-      ctx.state.setJointGroupPositions(jmg, *seed);
+      ctx.state.setJointGroupPositions(ctx.jmg, *seed);
     }
     else
     {
-      ctx.state.setToRandomPositions(jmg, ctx.rng);
+      ctx.state.setToRandomPositions(ctx.jmg, ctx.rng);
     }
-    const bool ok = ctx.state.setFromIK(jmg, pose, ee_link, timeout);
+    const bool ok = ctx.state.setFromIK(ctx.jmg, pose, ee_link, timeout);
     if (!ok)
     {
       return false;
     }
     ctx.state.update();
-    if (!ctx.state.satisfiesBounds(jmg))
+    if (!ctx.state.satisfiesBounds(ctx.jmg))
     {
       return false;
     }
     ctx.result.clear();
-    scene->checkSelfCollision(request, ctx.result, ctx.state);
+    ctx.scene->checkSelfCollision(ctx.request, ctx.result, ctx.state);
     if (ctx.result.collision)
     {
       return false;
     }
-    ctx.state.copyJointGroupPositions(jmg, solution);
+    ctx.state.copyJointGroupPositions(ctx.jmg, solution);
     return true;
   };
 
@@ -1039,9 +1011,17 @@ struct Hdf5Writer
 {
   hid_t file = -1;
   hid_t anchors_group = -1;
+  hid_t anchor_ctx_group = -1;
+  hid_t cells_group = -1;
+  hid_t cells_csr_group = -1;
   hid_t samples_group = -1;
   hid_t csr_group = -1;
   hid_t meta_group = -1;
+  hid_t cell_quat_dset = -1;
+  hid_t cell_level_dset = -1;
+  hid_t cell_state_dset = -1;
+  hid_t cell_phi_graph_dset = -1;
+  hid_t cell_anchor_start_dset = -1;
   hid_t quat_dset = -1;
   hid_t phi_dset = -1;
   hid_t label_dset = -1;
@@ -1049,11 +1029,13 @@ struct Hdf5Writer
   hid_t method_dset = -1;
   hid_t anchor_start_dset = -1;
   bool write_method = true;
+  bool write_cells = true;
+  size_t cell_count = 0;
   size_t sample_count = 0;
   size_t joint_count = 0;
   size_t chunk_rows = 0;
 
-  bool open(const std::string& path, size_t chunk, size_t joint_dim, bool enable_method)
+  bool open(const std::string& path, size_t chunk, size_t joint_dim, bool enable_method, bool enable_cells)
   {
     if (chunk == 0)
     {
@@ -1065,10 +1047,18 @@ struct Hdf5Writer
       return false;
     }
     anchors_group = H5Gcreate2(file, "/anchors", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    anchor_ctx_group = H5Gcreate2(file, "/anchor_ctx", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     samples_group = H5Gcreate2(file, "/samples", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     csr_group = H5Gcreate2(file, "/csr", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     meta_group = H5Gcreate2(file, "/meta", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-    if (anchors_group < 0 || samples_group < 0 || csr_group < 0 || meta_group < 0)
+    write_cells = enable_cells;
+    if (write_cells)
+    {
+      cells_group = H5Gcreate2(file, "/cells", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+      cells_csr_group = H5Gcreate2(file, "/cells_csr", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    }
+    if (anchors_group < 0 || anchor_ctx_group < 0 || samples_group < 0 || csr_group < 0 || meta_group < 0 ||
+        (write_cells && (cells_group < 0 || cells_csr_group < 0)))
     {
       return false;
     }
@@ -1076,6 +1066,40 @@ struct Hdf5Writer
     chunk_rows = chunk;
     joint_count = joint_dim;
     write_method = enable_method;
+
+    auto create_cell2d = [&](const char* name, hid_t dtype, hsize_t cols) -> hid_t {
+      if (!write_cells)
+      {
+        return -1;
+      }
+      hsize_t dims[2] = { 0, cols };
+      hsize_t max_dims[2] = { H5S_UNLIMITED, cols };
+      hsize_t chunk_dims[2] = { static_cast<hsize_t>(chunk_rows), cols };
+      hid_t space = H5Screate_simple(2, dims, max_dims);
+      hid_t plist = H5Pcreate(H5P_DATASET_CREATE);
+      H5Pset_chunk(plist, 2, chunk_dims);
+      hid_t dset = H5Dcreate2(cells_group, name, dtype, space, H5P_DEFAULT, plist, H5P_DEFAULT);
+      H5Pclose(plist);
+      H5Sclose(space);
+      return dset;
+    };
+
+    auto create_cell1d = [&](const char* name, hid_t dtype) -> hid_t {
+      if (!write_cells)
+      {
+        return -1;
+      }
+      hsize_t dims[1] = { 0 };
+      hsize_t max_dims[1] = { H5S_UNLIMITED };
+      hsize_t chunk_dims[1] = { static_cast<hsize_t>(chunk_rows) };
+      hid_t space = H5Screate_simple(1, dims, max_dims);
+      hid_t plist = H5Pcreate(H5P_DATASET_CREATE);
+      H5Pset_chunk(plist, 1, chunk_dims);
+      hid_t dset = H5Dcreate2(cells_group, name, dtype, space, H5P_DEFAULT, plist, H5P_DEFAULT);
+      H5Pclose(plist);
+      H5Sclose(space);
+      return dset;
+    };
 
     auto create2d = [&](const char* name, hid_t dtype, hsize_t cols) -> hid_t {
       hsize_t dims[2] = { 0, cols };
@@ -1114,7 +1138,16 @@ struct Hdf5Writer
     {
       joint_dset = create2d("joint", H5T_IEEE_F32LE, static_cast<hsize_t>(joint_count));
     }
-    return quat_dset >= 0 && phi_dset >= 0 && label_dset >= 0 && (!write_method || method_dset >= 0);
+    if (write_cells)
+    {
+      cell_quat_dset = create_cell2d("quat_center", H5T_IEEE_F32LE, 4);
+      cell_level_dset = create_cell1d("level", H5T_STD_U8LE);
+      cell_state_dset = create_cell1d("state", H5T_STD_U8LE);
+      cell_phi_graph_dset = create_cell1d("phi_graph", H5T_IEEE_F32LE);
+    }
+    return quat_dset >= 0 && phi_dset >= 0 && label_dset >= 0 && (!write_method || method_dset >= 0) &&
+           (!write_cells || (cell_quat_dset >= 0 && cell_level_dset >= 0 && cell_state_dset >= 0 &&
+                             cell_phi_graph_dset >= 0));
   }
 
   bool initAnchorStart()
@@ -1133,6 +1166,25 @@ struct Hdf5Writer
     H5Pclose(plist);
     H5Sclose(space);
     return anchor_start_dset >= 0;
+  }
+
+  bool initCellAnchorStart()
+  {
+    if (!write_cells || cells_csr_group < 0)
+    {
+      return false;
+    }
+    hsize_t dims[1] = { 0 };
+    hsize_t max_dims[1] = { H5S_UNLIMITED };
+    hsize_t chunk_dims[1] = { static_cast<hsize_t>(chunk_rows) };
+    hid_t space = H5Screate_simple(1, dims, max_dims);
+    hid_t plist = H5Pcreate(H5P_DATASET_CREATE);
+    H5Pset_chunk(plist, 1, chunk_dims);
+    cell_anchor_start_dset =
+        H5Dcreate2(cells_csr_group, "anchor_start", H5T_STD_U64LE, space, H5P_DEFAULT, plist, H5P_DEFAULT);
+    H5Pclose(plist);
+    H5Sclose(space);
+    return cell_anchor_start_dset >= 0;
   }
 
   bool appendAnchorStart(uint64_t value)
@@ -1157,6 +1209,33 @@ struct Hdf5Writer
     H5Sselect_hyperslab(filespace, H5S_SELECT_SET, start, nullptr, block, nullptr);
     hid_t memspace = H5Screate_simple(1, block, nullptr);
     const bool ok = H5Dwrite(anchor_start_dset, H5T_STD_U64LE, memspace, filespace, H5P_DEFAULT, &value) >= 0;
+    H5Sclose(memspace);
+    H5Sclose(filespace);
+    return ok;
+  }
+
+  bool appendCellAnchorStart(uint64_t value)
+  {
+    if (cell_anchor_start_dset < 0)
+    {
+      return false;
+    }
+    hid_t space = H5Dget_space(cell_anchor_start_dset);
+    hsize_t dims[1] = { 0 };
+    H5Sget_simple_extent_dims(space, dims, nullptr);
+    H5Sclose(space);
+
+    hsize_t new_dims[1] = { dims[0] + 1 };
+    if (H5Dset_extent(cell_anchor_start_dset, new_dims) < 0)
+    {
+      return false;
+    }
+    hid_t filespace = H5Dget_space(cell_anchor_start_dset);
+    hsize_t start[1] = { dims[0] };
+    hsize_t block[1] = { 1 };
+    H5Sselect_hyperslab(filespace, H5S_SELECT_SET, start, nullptr, block, nullptr);
+    hid_t memspace = H5Screate_simple(1, block, nullptr);
+    const bool ok = H5Dwrite(cell_anchor_start_dset, H5T_STD_U64LE, memspace, filespace, H5P_DEFAULT, &value) >= 0;
     H5Sclose(memspace);
     H5Sclose(filespace);
     return ok;
@@ -1288,6 +1367,93 @@ struct Hdf5Writer
     return true;
   }
 
+  bool appendCells(const std::vector<CellOutput>& cells)
+  {
+    if (!write_cells || cells.empty())
+    {
+      return true;
+    }
+    const size_t count = cells.size();
+    std::vector<float> quat_buf(count * 4, 0.0f);
+    std::vector<uint8_t> level_buf(count, 0);
+    std::vector<uint8_t> state_buf(count, 3);
+    std::vector<float> phi_buf(count, std::numeric_limits<float>::quiet_NaN());
+    for (size_t i = 0; i < count; ++i)
+    {
+      quat_buf[i * 4 + 0] = static_cast<float>(cells[i].quat.x());
+      quat_buf[i * 4 + 1] = static_cast<float>(cells[i].quat.y());
+      quat_buf[i * 4 + 2] = static_cast<float>(cells[i].quat.z());
+      quat_buf[i * 4 + 3] = static_cast<float>(cells[i].quat.w());
+      level_buf[i] = cells[i].level;
+      state_buf[i] = cells[i].state;
+      phi_buf[i] = cells[i].phi_graph;
+    }
+
+    auto append2d = [&](hid_t dset, hid_t dtype, const void* data, hsize_t cols) -> bool {
+      hid_t space = H5Dget_space(dset);
+      hsize_t dims[2] = { 0, 0 };
+      H5Sget_simple_extent_dims(space, dims, nullptr);
+      H5Sclose(space);
+
+      hsize_t new_dims[2] = { dims[0] + static_cast<hsize_t>(count), cols };
+      if (H5Dset_extent(dset, new_dims) < 0)
+      {
+        return false;
+      }
+      hid_t filespace = H5Dget_space(dset);
+      hsize_t start[2] = { dims[0], 0 };
+      hsize_t block[2] = { static_cast<hsize_t>(count), cols };
+      H5Sselect_hyperslab(filespace, H5S_SELECT_SET, start, nullptr, block, nullptr);
+      hid_t memspace = H5Screate_simple(2, block, nullptr);
+      const bool ok = H5Dwrite(dset, dtype, memspace, filespace, H5P_DEFAULT, data) >= 0;
+      H5Sclose(memspace);
+      H5Sclose(filespace);
+      return ok;
+    };
+
+    auto append1d = [&](hid_t dset, hid_t dtype, const void* data) -> bool {
+      hid_t space = H5Dget_space(dset);
+      hsize_t dims[1] = { 0 };
+      H5Sget_simple_extent_dims(space, dims, nullptr);
+      H5Sclose(space);
+
+      hsize_t new_dims[1] = { dims[0] + static_cast<hsize_t>(count) };
+      if (H5Dset_extent(dset, new_dims) < 0)
+      {
+        return false;
+      }
+      hid_t filespace = H5Dget_space(dset);
+      hsize_t start[1] = { dims[0] };
+      hsize_t block[1] = { static_cast<hsize_t>(count) };
+      H5Sselect_hyperslab(filespace, H5S_SELECT_SET, start, nullptr, block, nullptr);
+      hid_t memspace = H5Screate_simple(1, block, nullptr);
+      const bool ok = H5Dwrite(dset, dtype, memspace, filespace, H5P_DEFAULT, data) >= 0;
+      H5Sclose(memspace);
+      H5Sclose(filespace);
+      return ok;
+    };
+
+    if (!append2d(cell_quat_dset, H5T_IEEE_F32LE, quat_buf.data(), 4))
+    {
+      return false;
+    }
+    if (!append1d(cell_level_dset, H5T_STD_U8LE, level_buf.data()))
+    {
+      return false;
+    }
+    if (!append1d(cell_state_dset, H5T_STD_U8LE, state_buf.data()))
+    {
+      return false;
+    }
+    if (!append1d(cell_phi_graph_dset, H5T_IEEE_F32LE, phi_buf.data()))
+    {
+      return false;
+    }
+
+    cell_count += count;
+    return true;
+  }
+
   bool writeArray(hid_t group, const std::string& name, hid_t dtype, const std::vector<hsize_t>& dims,
                   const void* data)
   {
@@ -1332,6 +1498,12 @@ struct Hdf5Writer
     return writeScalar(group, name, dtype, &value);
   }
 
+  template <typename T>
+  bool writeScalarValue(hid_t group, const std::string& name, hid_t dtype, T value)
+  {
+    return writeScalar(group, name, dtype, &value);
+  }
+
   bool writeString(hid_t group, const std::string& name, const std::string& value)
   {
     if (group < 0)
@@ -1356,6 +1528,22 @@ struct Hdf5Writer
 
   void close()
   {
+    if (cell_quat_dset >= 0)
+    {
+      H5Dclose(cell_quat_dset);
+    }
+    if (cell_level_dset >= 0)
+    {
+      H5Dclose(cell_level_dset);
+    }
+    if (cell_state_dset >= 0)
+    {
+      H5Dclose(cell_state_dset);
+    }
+    if (cell_phi_graph_dset >= 0)
+    {
+      H5Dclose(cell_phi_graph_dset);
+    }
     if (quat_dset >= 0)
     {
       H5Dclose(quat_dset);
@@ -1380,6 +1568,14 @@ struct Hdf5Writer
     {
       H5Gclose(anchors_group);
     }
+    if (anchor_ctx_group >= 0)
+    {
+      H5Gclose(anchor_ctx_group);
+    }
+    if (cells_group >= 0)
+    {
+      H5Gclose(cells_group);
+    }
     if (samples_group >= 0)
     {
       H5Gclose(samples_group);
@@ -1389,9 +1585,18 @@ struct Hdf5Writer
       H5Dclose(anchor_start_dset);
       anchor_start_dset = -1;
     }
+    if (cell_anchor_start_dset >= 0)
+    {
+      H5Dclose(cell_anchor_start_dset);
+      cell_anchor_start_dset = -1;
+    }
     if (csr_group >= 0)
     {
       H5Gclose(csr_group);
+    }
+    if (cells_csr_group >= 0)
+    {
+      H5Gclose(cells_csr_group);
     }
     if (meta_group >= 0)
     {
@@ -1499,18 +1704,88 @@ int main(int argc, char** argv)
     has_coverage = false;
     coverage.assign(grid_size, 0.0f);
   }
+  std::vector<std::array<float, 4>> coverage_bin_quats;
+  try
+  {
+    std::vector<hsize_t> bin_dims;
+    const std::vector<float> bin_data = readDataset<float>(base_file, "/grid/orientation_bins", &bin_dims);
+    if (bin_dims.size() == 2 && bin_dims[1] == 4 && bin_data.size() == static_cast<size_t>(bin_dims[0] * 4))
+    {
+      coverage_bin_quats.reserve(static_cast<size_t>(bin_dims[0]));
+      for (size_t i = 0; i < static_cast<size_t>(bin_dims[0]); ++i)
+      {
+        coverage_bin_quats.push_back({ bin_data[i * 4 + 0], bin_data[i * 4 + 1], bin_data[i * 4 + 2],
+                                       bin_data[i * 4 + 3] });
+      }
+    }
+  }
+  catch (const std::exception&)
+  {
+    RCLCPP_WARN(logger, "Base HDF5 has no /grid/orientation_bins; anchor_ctx coverage_bits may be unavailable.");
+  }
+
+  std::vector<hsize_t> orientation_bits_dims;
+  hid_t orientation_bits_dset = -1;
+  size_t orientation_word_count = 0;
+  bool has_orientation_bits = false;
+  if (datasetExists(base_file, "/grid/orientation_bits"))
+  {
+    orientation_bits_dset = H5Dopen2(base_file, "/grid/orientation_bits", H5P_DEFAULT);
+    if (orientation_bits_dset >= 0)
+    {
+      hid_t bits_space = H5Dget_space(orientation_bits_dset);
+      const int rank = H5Sget_simple_extent_ndims(bits_space);
+      orientation_bits_dims.assign(static_cast<size_t>(rank), 0);
+      H5Sget_simple_extent_dims(bits_space, orientation_bits_dims.data(), nullptr);
+      H5Sclose(bits_space);
+
+      if (orientation_bits_dims.size() == 4 && orientation_bits_dims[0] == grid.nx &&
+          orientation_bits_dims[1] == grid.ny && orientation_bits_dims[2] == grid.nz &&
+          orientation_bits_dims[3] > 0)
+      {
+        orientation_word_count = static_cast<size_t>(orientation_bits_dims[3]);
+      }
+      else if (orientation_bits_dims.size() == 2 && orientation_bits_dims[0] == grid_size &&
+               orientation_bits_dims[1] > 0)
+      {
+        orientation_word_count = static_cast<size_t>(orientation_bits_dims[1]);
+      }
+      else if (orientation_bits_dims.size() == 1 && orientation_bits_dims[0] == grid_size)
+      {
+        orientation_word_count = 1;
+      }
+      else
+      {
+        RCLCPP_WARN(logger, "/grid/orientation_bits shape does not match grid; falling back to reservoir-derived "
+                            "anchor_ctx coverage_bits.");
+        H5Dclose(orientation_bits_dset);
+        orientation_bits_dset = -1;
+      }
+      has_orientation_bits = orientation_bits_dset >= 0 && orientation_word_count > 0;
+    }
+  }
   std::vector<uint32_t> counts = readDataset<uint32_t>(base_file, "/grid/voxel_counts");
-  std::vector<uint64_t> voxel_start = readDataset<uint64_t>(base_file, "/csr/voxel_start");
+  bool has_seed_csr = true;
+  std::vector<uint64_t> voxel_start;
+  try
+  {
+    voxel_start = readDataset<uint64_t>(base_file, "/csr/voxel_start");
+  }
+  catch (const std::exception&)
+  {
+    has_seed_csr = false;
+    RCLCPP_WARN(logger, "Base HDF5 has no /csr/voxel_start; orientation mining will use random FK seeds only.");
+  }
   std::string index_dtype = readStringDataset(base_file, "/csr/index_dtype", "uint32");
   bool sample_index_is_u64 = false;
   std::vector<uint64_t> sample_index_u64;
   std::vector<uint32_t> sample_index_u32;
-  if (index_dtype == "uint64")
+  if (has_seed_csr && index_dtype == "uint64")
   {
     sample_index_is_u64 = true;
     sample_index_u64 = readDataset<uint64_t>(base_file, "/csr/sample_index");
   }
-  else
+  else if (has_seed_csr)
   {
     if (index_dtype != "uint32")
     {
@@ -1556,7 +1831,7 @@ int main(int argc, char** argv)
   std::vector<double> n_samples;
   s_samples.reserve(std::min(max_quantile_samples, grid_size));
   n_samples.reserve(std::min(max_quantile_samples, grid_size));
-  random_numbers::RandomNumberGenerator quant_rng(1337);
+  random_numbers::RandomNumberGenerator quant_rng(toRosRngSeed(cfg.anchor_quantile_seed));
   size_t seen_inside = 0;
 
   for (size_t x = 0; x < grid.nx; ++x)
@@ -1743,7 +2018,8 @@ int main(int argc, char** argv)
                     + omp_get_thread_num()
 #endif
         ;
-    random_numbers::RandomNumberGenerator rng(1234 + tid * 97);
+    random_numbers::RandomNumberGenerator rng(
+        toRosRngSeed(cfg.anchor_quota_seed_base + static_cast<uint64_t>(tid) * cfg.anchor_quota_seed_stride));
 
 #pragma omp for schedule(static)
     for (size_t x = 0; x < grid.nx; ++x)
@@ -1869,7 +2145,8 @@ int main(int argc, char** argv)
                       + omp_get_thread_num()
 #endif
           ;
-      random_numbers::RandomNumberGenerator rng(4321 + tid * 53);
+      random_numbers::RandomNumberGenerator rng(
+          toRosRngSeed(cfg.anchor_global_seed_base + static_cast<uint64_t>(tid) * cfg.anchor_global_seed_stride));
 
 #pragma omp for schedule(static)
       for (size_t x = 0; x < grid.nx; ++x)
@@ -1965,24 +2242,46 @@ int main(int argc, char** argv)
   std::sort(anchors.begin(), anchors.end(), [](const Anchor& a, const Anchor& b) { return a.weight > b.weight; });
 
   const size_t total_anchors = anchors.size();
-  size_t start_anchor = 0;
-  if (cfg.debug_start_anchor > 0)
-  {
-    start_anchor = std::min(static_cast<size_t>(cfg.debug_start_anchor), total_anchors);
-  }
-  size_t process_count = total_anchors - start_anchor;
-  if (cfg.debug_max_anchors > 0)
-  {
-    process_count = std::min(process_count, static_cast<size_t>(cfg.debug_max_anchors));
-  }
   std::vector<uint8_t> anchor_selected(total_anchors, 0);
-  for (size_t i = start_anchor; i < start_anchor + process_count; ++i)
+  std::vector<uint8_t> anchor_full_reachable(total_anchors, 0);
+  size_t start_anchor = 0;
+  size_t process_count = 0;
+  if (!cfg.debug_anchor_indices.empty())
   {
-    anchor_selected[i] = 1;
+    for (const int raw_idx : cfg.debug_anchor_indices)
+    {
+      if (raw_idx < 0)
+      {
+        continue;
+      }
+      const size_t idx = static_cast<size_t>(raw_idx);
+      if (idx >= total_anchors || anchor_selected[idx] != 0)
+      {
+        continue;
+      }
+      anchor_selected[idx] = 1;
+      ++process_count;
+    }
+    RCLCPP_INFO(logger, "Anchors selected: %zu (processing %zu explicit indices)", total_anchors, process_count);
   }
-
-  RCLCPP_INFO(logger, "Anchors selected: %zu (processing %zu, start=%zu)", total_anchors, process_count,
-              start_anchor);
+  else
+  {
+    if (cfg.debug_start_anchor > 0)
+    {
+      start_anchor = std::min(static_cast<size_t>(cfg.debug_start_anchor), total_anchors);
+    }
+    process_count = total_anchors - start_anchor;
+    if (cfg.debug_max_anchors > 0)
+    {
+      process_count = std::min(process_count, static_cast<size_t>(cfg.debug_max_anchors));
+    }
+    for (size_t i = start_anchor; i < start_anchor + process_count; ++i)
+    {
+      anchor_selected[i] = 1;
+    }
+    RCLCPP_INFO(logger, "Anchors selected: %zu (processing %zu, start=%zu)", total_anchors, process_count,
+                start_anchor);
+  }
 
   reachability_cli::RobotContext context;
   try
@@ -1998,7 +2297,6 @@ int main(int argc, char** argv)
   }
 
   const auto& robot_model = context.model;
-  const auto& scene = context.scene;
   const auto* jmg = robot_model->getJointModelGroup(cfg.group_name);
   if (!jmg)
   {
@@ -2017,72 +2315,101 @@ int main(int argc, char** argv)
     return 1;
   }
 
-  auto solver_allocator = [node, robot_model, cfg](const moveit::core::JointModelGroup* group)
-      -> kinematics::KinematicsBasePtr {
-    auto solver = std::make_shared<kdl_kinematics_plugin::KDLKinematicsPlugin>();
-    const std::vector<std::string> tips{ cfg.ee_link };
-    if (!solver->initialize(node, *robot_model, group->getName(), cfg.base_link, tips, cfg.search_discretization))
+  auto configure_solver = [&](const moveit::core::RobotModelPtr& model,
+                              const moveit::core::JointModelGroup* group) -> bool {
+    if (!group)
     {
-      RCLCPP_ERROR(node->get_logger(), "Failed to initialize KDL solver for group '%s'", group->getName().c_str());
-      return kinematics::KinematicsBasePtr();
+      return false;
     }
-    return kinematics::KinematicsBasePtr(solver);
+    auto solver_allocator = [node, model, cfg](const moveit::core::JointModelGroup* solver_group)
+        -> kinematics::KinematicsBasePtr {
+      auto solver = std::make_shared<kdl_kinematics_plugin::KDLKinematicsPlugin>();
+      const std::vector<std::string> tips{ cfg.ee_link };
+      if (!solver->initialize(node, *model, solver_group->getName(), cfg.base_link, tips, cfg.search_discretization))
+      {
+        RCLCPP_ERROR(node->get_logger(), "Failed to initialize KDL solver for group '%s'",
+                     solver_group->getName().c_str());
+        return kinematics::KinematicsBasePtr();
+      }
+      return kinematics::KinematicsBasePtr(solver);
+    };
+    const_cast<moveit::core::JointModelGroup*>(group)->setSolverAllocators(solver_allocator);
+    const_cast<moveit::core::JointModelGroup*>(group)->setDefaultIKTimeout(cfg.ik_timeout_coarse);
+    return true;
   };
 
-  const_cast<moveit::core::JointModelGroup*>(jmg)->setSolverAllocators(solver_allocator);
-  const_cast<moveit::core::JointModelGroup*>(jmg)->setDefaultIKTimeout(cfg.ik_timeout);
-
-  collision_detection::CollisionRequest request;
-  request.group_name = cfg.group_name;
-  request.contacts = false;
-  request.max_contacts = 0;
+  configure_solver(robot_model, jmg);
 
   std::vector<ThreadContext> thread_contexts;
   thread_contexts.reserve(static_cast<size_t>(thread_count));
   for (int i = 0; i < thread_count; ++i)
   {
-    thread_contexts.emplace_back(robot_model, 2024 + i * 101, joint_count);
+    reachability_cli::RobotContext thread_robot;
+    try
+    {
+      thread_robot = reachability_cli::loadRobotFromFiles(cfg.urdf_path, cfg.srdf_path);
+    }
+    catch (const std::exception& ex)
+    {
+      RCLCPP_ERROR(logger, "Failed to load per-thread robot model %d: %s", i, ex.what());
+      H5Fclose(base_file);
+      rclcpp::shutdown();
+      return 1;
+    }
+    const auto* thread_jmg = thread_robot.model->getJointModelGroup(cfg.group_name);
+    if (!configure_solver(thread_robot.model, thread_jmg))
+    {
+      RCLCPP_ERROR(logger, "JointModelGroup '%s' not found in per-thread robot model %d", cfg.group_name.c_str(), i);
+      H5Fclose(base_file);
+      rclcpp::shutdown();
+      return 1;
+    }
+    const int thread_seed =
+        toRosRngSeed(cfg.thread_seed_base + static_cast<uint64_t>(i) * cfg.thread_seed_stride);
+    thread_contexts.emplace_back(std::move(thread_robot), thread_jmg, thread_seed, joint_count, cfg.group_name);
   }
 
-  const int coarse_min = std::max(1, cfg.coarse_min);
-  const int coarse_max = std::max(coarse_min, cfg.coarse_max);
-  SampleSet precomp_min;
-  SampleSet precomp_max;
-  if (!cfg.scramble_per_anchor)
+  const int so3_base_cells = std::max(1, cfg.so3_base_cells);
+  const int so3_max_depth = std::max(0, cfg.so3_max_depth);
+  const double base_radius =
+      std::max(0.32, cfg.so3_leaf_radius * std::pow(2.0, static_cast<double>(so3_max_depth)));
+  if (cfg.so3_grid != "hopf")
   {
-    RCLCPP_INFO(logger, "Precompute Sobol quats: N=%d (seed=%llu)", coarse_max,
-                static_cast<unsigned long long>(cfg.sobol_seed));
-    precomp_max.quats = generateSobolQuats(static_cast<size_t>(coarse_max), cfg.sobol_seed, false);
-    precomp_max.knn = buildKNNGraph(precomp_max.quats, cfg.knn_k, thread_count);
-    if (coarse_min != coarse_max)
-    {
-      precomp_min.quats.assign(precomp_max.quats.begin(),
-                               precomp_max.quats.begin() + static_cast<long>(coarse_min));
-      precomp_min.knn = buildKNNGraph(precomp_min.quats, cfg.knn_k, thread_count);
-    }
-    else
-    {
-      precomp_min = precomp_max;
-    }
+    RCLCPP_WARN(logger, "Unknown so3_grid='%s'; using hopf.", cfg.so3_grid.c_str());
+    cfg.so3_grid = "hopf";
   }
-  else
+  if (cfg.so3_split_factor != 8)
   {
-    RCLCPP_WARN(logger, "scramble_per_anchor=true; Sobol samples and kNN will be built per anchor.");
+    RCLCPP_WARN(logger, "so3_split_factor=%d requested; current implementation uses fixed 8-way tangent split.",
+                cfg.so3_split_factor);
+    cfg.so3_split_factor = 8;
   }
+  RCLCPP_INFO(logger, "SO3 grid: %s base_cells=%d depth=%d base_radius=%.4f leaf_radius=%.4f",
+              cfg.so3_grid.c_str(), so3_base_cells, so3_max_depth, base_radius, cfg.so3_leaf_radius);
+  const std::vector<Eigen::Quaterniond> base_quats = generateHopfQuats(static_cast<size_t>(so3_base_cells), 0);
 
   std::vector<Eigen::Quaterniond> q_ref;
   if (cfg.q_ref_size > 0)
   {
     const int q_pool = std::max(cfg.q_ref_pool, cfg.q_ref_size);
-    const uint64_t q_seed = cfg.sobol_seed + 0x9e3779b97f4a7c15ULL;
+    const uint64_t q_seed = cfg.q_ref_seed;
     RCLCPP_INFO(logger, "Q_ref: pool=%d size=%d (seed=%llu)", q_pool, cfg.q_ref_size,
                 static_cast<unsigned long long>(q_seed));
-    const auto q_pool_quats = generateSobolQuats(static_cast<size_t>(q_pool), q_seed, true);
+    const auto q_pool_quats = generateHopfQuats(static_cast<size_t>(q_pool), q_seed);
     q_ref = selectFarthestQuats(q_pool_quats, cfg.q_ref_size);
+  }
+  uint64_t full_validation_seed_base = cfg.full_reachable_validation_seed;
+  if (full_validation_seed_base == 0)
+  {
+    full_validation_seed_base = 20260429ULL;
+    RCLCPP_WARN(logger, "sampling.full_reachable_validation_seed=0 is not reproducible in the config; using "
+                        "deterministic fallback seed %llu.",
+                static_cast<unsigned long long>(full_validation_seed_base));
   }
 
   Hdf5Writer writer;
-  if (!writer.open(cfg.output_path, cfg.hdf5_chunk, cfg.write_joint ? joint_count : 0, cfg.write_method))
+  if (!writer.open(cfg.output_path, cfg.hdf5_chunk, cfg.write_joint ? joint_count : 0, cfg.write_method,
+                   cfg.write_cells))
   {
     RCLCPP_ERROR(logger, "Failed to create output HDF5: %s", cfg.output_path.c_str());
     H5Fclose(base_file);
@@ -2095,6 +2422,17 @@ int main(int argc, char** argv)
     {
       RCLCPP_WARN(logger, "Failed to init streaming /csr/anchor_start; fall back to end-write.");
       cfg.stream_csr = false;
+    }
+  }
+  if (cfg.write_cells)
+  {
+    if (!writer.initCellAnchorStart())
+    {
+      RCLCPP_ERROR(logger, "Failed to init streaming /cells_csr/anchor_start.");
+      writer.close();
+      H5Fclose(base_file);
+      rclcpp::shutdown();
+      return 1;
     }
   }
   writer.writeString(writer.meta_group, "base_h5_path", cfg.base_h5_path);
@@ -2112,6 +2450,63 @@ int main(int argc, char** argv)
   writer.writeScalar(writer.meta_group, "n_ref_p90", H5T_IEEE_F64LE, n_ref);
   writer.writeScalar(writer.meta_group, "r_max_l2", H5T_IEEE_F64LE, r_max_l2);
   writer.writeScalar(writer.meta_group, "r_max_linf", H5T_IEEE_F64LE, r_max_linf);
+  writer.writeString(writer.meta_group, "so3_grid", cfg.so3_grid);
+  writer.writeScalarValue<int32_t>(writer.meta_group, "so3_base_cells", H5T_STD_I32LE, so3_base_cells);
+  writer.writeScalarValue<int32_t>(writer.meta_group, "so3_split_factor", H5T_STD_I32LE, cfg.so3_split_factor);
+  writer.writeScalarValue<int32_t>(writer.meta_group, "so3_max_depth", H5T_STD_I32LE, so3_max_depth);
+  writer.writeScalar(writer.meta_group, "so3_base_radius", H5T_IEEE_F64LE, base_radius);
+  writer.writeScalar(writer.meta_group, "so3_leaf_radius", H5T_IEEE_F64LE, cfg.so3_leaf_radius);
+  writer.writeScalar(writer.meta_group, "so3_stencil_radius_ratio", H5T_IEEE_F64LE, cfg.so3_stencil_radius_ratio);
+  writer.writeScalar(writer.meta_group, "so3_refine_band", H5T_IEEE_F64LE, cfg.so3_refine_band);
+  writer.writeScalar(writer.meta_group, "delta_boundary", H5T_IEEE_F64LE, cfg.delta_boundary);
+  writer.writeScalarValue<int32_t>(writer.meta_group, "boundary_refine_steps", H5T_STD_I32LE,
+                                   cfg.boundary_refine_steps);
+  writer.writeScalarValue<int32_t>(writer.meta_group, "max_boundary_brackets", H5T_STD_I32LE,
+                                   cfg.max_boundary_brackets);
+  writer.writeScalarValue<int32_t>(writer.meta_group, "full_reachable_validation_samples", H5T_STD_I32LE,
+                                   cfg.full_reachable_validation_samples);
+  writer.writeScalarValue<uint64_t>(writer.meta_group, "full_reachable_validation_seed", H5T_STD_U64LE,
+                                    cfg.full_reachable_validation_seed);
+  writer.writeScalarValue<uint64_t>(writer.meta_group, "full_reachable_validation_effective_seed_base",
+                                    H5T_STD_U64LE, full_validation_seed_base);
+  writer.writeScalarValue<uint64_t>(writer.meta_group, "q_ref_seed", H5T_STD_U64LE, cfg.q_ref_seed);
+  writer.writeScalarValue<uint64_t>(writer.meta_group, "so3_base_seed", H5T_STD_U64LE, 0ULL);
+  writer.writeScalarValue<uint64_t>(writer.meta_group, "anchor_quantile_seed", H5T_STD_U64LE,
+                                    cfg.anchor_quantile_seed);
+  writer.writeScalarValue<uint64_t>(writer.meta_group, "anchor_quota_seed_base", H5T_STD_U64LE,
+                                    cfg.anchor_quota_seed_base);
+  writer.writeScalarValue<uint64_t>(writer.meta_group, "anchor_quota_seed_stride", H5T_STD_U64LE,
+                                    cfg.anchor_quota_seed_stride);
+  writer.writeScalarValue<uint64_t>(writer.meta_group, "anchor_global_seed_base", H5T_STD_U64LE,
+                                    cfg.anchor_global_seed_base);
+  writer.writeScalarValue<uint64_t>(writer.meta_group, "anchor_global_seed_stride", H5T_STD_U64LE,
+                                    cfg.anchor_global_seed_stride);
+  writer.writeScalarValue<uint64_t>(writer.meta_group, "thread_seed_base", H5T_STD_U64LE, cfg.thread_seed_base);
+  writer.writeScalarValue<uint64_t>(writer.meta_group, "thread_seed_stride", H5T_STD_U64LE, cfg.thread_seed_stride);
+  writer.writeScalarValue<uint64_t>(writer.meta_group, "fallback_seed_base", H5T_STD_U64LE,
+                                    cfg.fallback_seed_base);
+  writer.writeScalarValue<uint64_t>(writer.meta_group, "fallback_seed_stride", H5T_STD_U64LE,
+                                    cfg.fallback_seed_stride);
+  writer.writeScalarValue<int32_t>(writer.meta_group, "ik_csr_trials_coarse", H5T_STD_I32LE,
+                                   cfg.ik_csr_trials_coarse);
+  writer.writeScalarValue<int32_t>(writer.meta_group, "ik_random_trials_coarse", H5T_STD_I32LE,
+                                   cfg.ik_random_trials_coarse);
+  writer.writeScalar(writer.meta_group, "ik_timeout_coarse", H5T_IEEE_F64LE, cfg.ik_timeout_coarse);
+  writer.writeScalarValue<int32_t>(writer.meta_group, "ik_csr_trials_refine", H5T_STD_I32LE,
+                                   cfg.ik_csr_trials_refine);
+  writer.writeScalarValue<int32_t>(writer.meta_group, "ik_random_trials_refine", H5T_STD_I32LE,
+                                   cfg.ik_random_trials_refine);
+  writer.writeScalar(writer.meta_group, "ik_timeout_refine", H5T_IEEE_F64LE, cfg.ik_timeout_refine);
+  writer.writeScalarValue<int32_t>(writer.meta_group, "ik_csr_trials_bisect", H5T_STD_I32LE,
+                                   cfg.ik_csr_trials_bisect);
+  writer.writeScalarValue<int32_t>(writer.meta_group, "ik_random_trials_bisect", H5T_STD_I32LE,
+                                   cfg.ik_random_trials_bisect);
+  writer.writeScalar(writer.meta_group, "ik_timeout_bisect", H5T_IEEE_F64LE, cfg.ik_timeout_bisect);
+  if (!cfg.shell_deltas.empty())
+  {
+    std::vector<double> shell = cfg.shell_deltas;
+    writer.writeArray(writer.meta_group, "shell_deltas", H5T_IEEE_F64LE, { shell.size() }, shell.data());
+  }
   if (!q_ref.empty())
   {
     std::vector<float> q_ref_buf;
@@ -2126,9 +2521,29 @@ int main(int argc, char** argv)
     }
     writer.writeArray(writer.meta_group, "q_ref", H5T_IEEE_F32LE,
                       { static_cast<hsize_t>(q_ref.size()), 4 }, q_ref_buf.data());
-    writer.writeScalar(writer.meta_group, "q_ref_size", H5T_STD_I32LE, cfg.q_ref_size);
-    writer.writeScalar(writer.meta_group, "q_ref_pool", H5T_STD_I32LE, cfg.q_ref_pool);
+    writer.writeScalarValue<int32_t>(writer.meta_group, "q_ref_size", H5T_STD_I32LE, cfg.q_ref_size);
+    writer.writeScalarValue<int32_t>(writer.meta_group, "q_ref_pool", H5T_STD_I32LE, cfg.q_ref_pool);
   }
+  writer.writeScalar(writer.meta_group, "phi_full", H5T_IEEE_F64LE, cfg.phi_full);
+
+  auto q_ref_bucket = [&](const Eigen::Quaterniond& q) -> size_t {
+    if (q_ref.empty())
+    {
+      return 0;
+    }
+    size_t best = 0;
+    double best_dot = -1.0;
+    for (size_t i = 0; i < q_ref.size(); ++i)
+    {
+      const double dot = std::abs(q.dot(q_ref[i]));
+      if (dot > best_dot)
+      {
+        best_dot = dot;
+        best = i;
+      }
+    }
+    return best;
+  };
 
   std::vector<uint64_t> anchor_ids;
   std::vector<float> anchor_pos;
@@ -2136,9 +2551,85 @@ int main(int argc, char** argv)
   std::vector<float> anchor_c;
   std::vector<float> anchor_g;
   std::vector<uint32_t> anchor_n;
-
-  for (const auto& a : anchors)
+  constexpr size_t kAnchorCtxScalarDim = 8;
+  size_t coverage_bit_count = coverage_bin_quats.empty() ? size_t{ 64 } : coverage_bin_quats.size();
+  if (has_orientation_bits)
   {
+    coverage_bit_count = std::min(coverage_bit_count, orientation_word_count * size_t{ 64 });
+  }
+  if (coverage_bit_count == 0)
+  {
+    coverage_bit_count = 64;
+  }
+  std::vector<float> anchor_ctx_scalar(anchors.size() * kAnchorCtxScalarDim, 0.0f);
+  std::vector<uint8_t> anchor_ctx_coverage_bits(anchors.size() * coverage_bit_count, 0);
+
+  auto xyz_from_index = [&](size_t idx, size_t& x, size_t& y, size_t& z) {
+    x = idx / (grid.ny * grid.nz);
+    const size_t rem = idx % (grid.ny * grid.nz);
+    y = rem / grid.nz;
+    z = rem % grid.nz;
+  };
+
+  auto sbar_at = [&](size_t x, size_t y, size_t z) -> double {
+    const size_t idx = grid.index(x, y, z);
+    return static_cast<double>(sdf[idx]) / s_ref;
+  };
+
+  auto finite_diff_sbar = [&](size_t x, size_t y, size_t z, int axis) -> double {
+    size_t xm = x;
+    size_t xp = x;
+    size_t ym = y;
+    size_t yp = y;
+    size_t zm = z;
+    size_t zp = z;
+    if (axis == 0)
+    {
+      xm = x > 0 ? x - 1 : x;
+      xp = x + 1 < grid.nx ? x + 1 : x;
+    }
+    else if (axis == 1)
+    {
+      ym = y > 0 ? y - 1 : y;
+      yp = y + 1 < grid.ny ? y + 1 : y;
+    }
+    else
+    {
+      zm = z > 0 ? z - 1 : z;
+      zp = z + 1 < grid.nz ? z + 1 : z;
+    }
+    const int step = axis == 0 ? static_cast<int>(xp) - static_cast<int>(xm) :
+                     axis == 1 ? static_cast<int>(yp) - static_cast<int>(ym) :
+                                 static_cast<int>(zp) - static_cast<int>(zm);
+    if (step == 0)
+    {
+      return 0.0;
+    }
+    return (sbar_at(xp, yp, zp) - sbar_at(xm, ym, zm)) /
+           (static_cast<double>(step) * grid.voxel_size);
+  };
+
+  auto kappa_proxy = [&](size_t x, size_t y, size_t z) -> double {
+    const double center = sbar_at(x, y, z);
+    double accum = 0.0;
+    auto add_neighbor = [&](bool valid, size_t nx, size_t ny, size_t nz) {
+      if (valid)
+      {
+        accum += sbar_at(nx, ny, nz) - center;
+      }
+    };
+    add_neighbor(x > 0, x > 0 ? x - 1 : x, y, z);
+    add_neighbor(x + 1 < grid.nx, x + 1 < grid.nx ? x + 1 : x, y, z);
+    add_neighbor(y > 0, x, y > 0 ? y - 1 : y, z);
+    add_neighbor(y + 1 < grid.ny, x, y + 1 < grid.ny ? y + 1 : y, z);
+    add_neighbor(z > 0, x, y, z > 0 ? z - 1 : z);
+    add_neighbor(z + 1 < grid.nz, x, y, z + 1 < grid.nz ? z + 1 : z);
+    return accum / std::max(1e-18, grid.voxel_size * grid.voxel_size);
+  };
+
+  for (size_t ai = 0; ai < anchors.size(); ++ai)
+  {
+    const auto& a = anchors[ai];
     anchor_ids.push_back(static_cast<uint64_t>(a.idx));
     anchor_pos.push_back(a.pos.x());
     anchor_pos.push_back(a.pos.y());
@@ -2147,6 +2638,148 @@ int main(int argc, char** argv)
     anchor_c.push_back(a.c_v);
     anchor_g.push_back(a.g_v);
     anchor_n.push_back(a.n_seed);
+
+    size_t x = 0;
+    size_t y = 0;
+    size_t z = 0;
+    xyz_from_index(a.idx, x, y, z);
+    const double gx = finite_diff_sbar(x, y, z, 0);
+    const double gy = finite_diff_sbar(x, y, z, 1);
+    const double gz = finite_diff_sbar(x, y, z, 2);
+    const double grad_norm = std::sqrt(gx * gx + gy * gy + gz * gz);
+    const double kappa = kappa_proxy(x, y, z);
+    const size_t scalar_offset = ai * kAnchorCtxScalarDim;
+    anchor_ctx_scalar[scalar_offset + 0] = static_cast<float>(gx);
+    anchor_ctx_scalar[scalar_offset + 1] = static_cast<float>(gy);
+    anchor_ctx_scalar[scalar_offset + 2] = static_cast<float>(gz);
+    anchor_ctx_scalar[scalar_offset + 3] = static_cast<float>(grad_norm);
+    anchor_ctx_scalar[scalar_offset + 4] = static_cast<float>(kappa);
+    anchor_ctx_scalar[scalar_offset + 5] = static_cast<float>(a.n_seed);
+    anchor_ctx_scalar[scalar_offset + 6] = a.c_v;
+    anchor_ctx_scalar[scalar_offset + 7] = a.g_v;
+  }
+
+  std::string coverage_bits_source = "unavailable_zero_filled";
+  bool coverage_bits_exact = false;
+  if (has_orientation_bits)
+  {
+    coverage_bits_source = "/grid/orientation_bits";
+    coverage_bits_exact = true;
+    for (size_t ai = 0; ai < anchors.size(); ++ai)
+    {
+      size_t ax = 0;
+      size_t ay = 0;
+      size_t az = 0;
+      xyz_from_index(anchors[ai].idx, ax, ay, az);
+      std::vector<uint64_t> words(orientation_word_count, 0);
+      hid_t filespace = H5Dget_space(orientation_bits_dset);
+      hid_t memspace = -1;
+      if (orientation_bits_dims.size() == 4)
+      {
+        hsize_t start[4] = { static_cast<hsize_t>(ax), static_cast<hsize_t>(ay), static_cast<hsize_t>(az), 0 };
+        hsize_t count[4] = { 1, 1, 1, static_cast<hsize_t>(orientation_word_count) };
+        H5Sselect_hyperslab(filespace, H5S_SELECT_SET, start, nullptr, count, nullptr);
+        hsize_t mem_dims[1] = { static_cast<hsize_t>(orientation_word_count) };
+        memspace = H5Screate_simple(1, mem_dims, nullptr);
+      }
+      else if (orientation_bits_dims.size() == 2)
+      {
+        hsize_t start[2] = { static_cast<hsize_t>(anchors[ai].idx), 0 };
+        hsize_t count[2] = { 1, static_cast<hsize_t>(orientation_word_count) };
+        H5Sselect_hyperslab(filespace, H5S_SELECT_SET, start, nullptr, count, nullptr);
+        hsize_t mem_dims[1] = { static_cast<hsize_t>(orientation_word_count) };
+        memspace = H5Screate_simple(1, mem_dims, nullptr);
+      }
+      else
+      {
+        hsize_t start[1] = { static_cast<hsize_t>(anchors[ai].idx) };
+        hsize_t count[1] = { 1 };
+        H5Sselect_hyperslab(filespace, H5S_SELECT_SET, start, nullptr, count, nullptr);
+        hsize_t mem_dims[1] = { 1 };
+        memspace = H5Screate_simple(1, mem_dims, nullptr);
+      }
+      const bool read_ok =
+          memspace >= 0 && H5Dread(orientation_bits_dset, H5T_STD_U64LE, memspace, filespace, H5P_DEFAULT,
+                                   words.data()) >= 0;
+      if (memspace >= 0)
+      {
+        H5Sclose(memspace);
+      }
+      H5Sclose(filespace);
+      if (!read_ok)
+      {
+        continue;
+      }
+      for (size_t b = 0; b < coverage_bit_count; ++b)
+      {
+        const size_t w = b / 64;
+        const size_t bit = b % 64;
+        if (w < words.size() && ((words[w] >> bit) & 1ULL) != 0ULL)
+        {
+          setBit(anchor_ctx_coverage_bits, ai, coverage_bit_count, b);
+        }
+      }
+    }
+    if (orientation_bits_dset >= 0)
+    {
+      H5Dclose(orientation_bits_dset);
+      orientation_bits_dset = -1;
+    }
+  }
+  else if (has_seed_csr && !coverage_bin_quats.empty())
+  {
+    hid_t quat_dset = H5Dopen2(base_file, "/samples/quat", H5P_DEFAULT);
+    if (quat_dset >= 0)
+    {
+      coverage_bits_source = "reservoir_samples_nearest_/grid/orientation_bins";
+      for (size_t ai = 0; ai < anchors.size(); ++ai)
+      {
+        const uint64_t voxel_idx = static_cast<uint64_t>(anchors[ai].idx);
+        if (voxel_idx + 1 >= voxel_start.size())
+        {
+          continue;
+        }
+        const uint64_t start = voxel_start[static_cast<size_t>(voxel_idx)];
+        const uint64_t end = voxel_start[static_cast<size_t>(voxel_idx + 1)];
+        if (end <= start || start >= sample_index_size)
+        {
+          continue;
+        }
+        const size_t end_cap = static_cast<size_t>(std::min<uint64_t>(end, sample_index_size));
+        for (size_t si = static_cast<size_t>(start); si < end_cap; ++si)
+        {
+          const uint64_t row = sample_index_is_u64 ? sample_index_u64[si] : sample_index_u32[si];
+          hsize_t start_row[2] = { static_cast<hsize_t>(row), 0 };
+          hsize_t count_row[2] = { 1, 4 };
+          std::array<float, 4> qbuf{};
+          hid_t qspace = H5Dget_space(quat_dset);
+          H5Sselect_hyperslab(qspace, H5S_SELECT_SET, start_row, nullptr, count_row, nullptr);
+          hid_t qmem = H5Screate_simple(2, count_row, nullptr);
+          const bool ok = H5Dread(quat_dset, H5T_IEEE_F32LE, qmem, qspace, H5P_DEFAULT, qbuf.data()) >= 0;
+          H5Sclose(qmem);
+          H5Sclose(qspace);
+          if (!ok)
+          {
+            continue;
+          }
+          Eigen::Quaterniond q(qbuf[3], qbuf[0], qbuf[1], qbuf[2]);
+          q.normalize();
+          const int bin = nearestCoverageBin(q, coverage_bin_quats);
+          if (bin >= 0)
+          {
+            setBit(anchor_ctx_coverage_bits, ai, coverage_bit_count, static_cast<size_t>(bin));
+          }
+        }
+      }
+      H5Dclose(quat_dset);
+      RCLCPP_WARN(logger,
+                  "Base HDF5 has no /grid/orientation_bits; /anchor_ctx/coverage_bits was reconstructed from "
+                  "stored reservoir samples and is not the full Stage-1 accepted-hit bitset.");
+    }
+  }
+  else
+  {
+    RCLCPP_WARN(logger, "No source available for /anchor_ctx/coverage_bits; writing zeros.");
   }
 
   writer.writeArray(writer.anchors_group, "voxel_id", H5T_STD_U64LE, { anchor_ids.size() }, anchor_ids.data());
@@ -2156,19 +2789,42 @@ int main(int argc, char** argv)
   writer.writeArray(writer.anchors_group, "g_v", H5T_IEEE_F32LE, { anchor_ids.size() }, anchor_g.data());
   writer.writeArray(writer.anchors_group, "n_seed", H5T_STD_U32LE, { anchor_ids.size() }, anchor_n.data());
   writer.writeArray(writer.anchors_group, "selected", H5T_STD_U8LE, { anchor_selected.size() }, anchor_selected.data());
+  writer.writeArray(writer.anchor_ctx_group, "scalar", H5T_IEEE_F32LE,
+                    { anchor_ids.size(), static_cast<hsize_t>(kAnchorCtxScalarDim) }, anchor_ctx_scalar.data());
+  writer.writeArray(writer.anchor_ctx_group, "coverage_bits", H5T_STD_U8LE,
+                    { anchor_ids.size(), static_cast<hsize_t>(coverage_bit_count) },
+                    anchor_ctx_coverage_bits.data());
+  writer.writeString(writer.meta_group, "anchor_context_spec_json",
+                     "{\"scalar_fields\":[\"grad_s_x\",\"grad_s_y\",\"grad_s_z\",\"grad_norm\","
+                     "\"kappa_proxy\",\"n_v\",\"c_v\",\"g_v\"],\"s_bar\":\"sdf/s_ref_p90\","
+                     "\"gradient\":\"finite_difference_over_physical_voxel_size\","
+                     "\"kappa_proxy\":\"six_neighbor_laplacian_over_physical_voxel_size_squared\","
+                     "\"coverage_bits\":\"Stage-1 orientation coverage bitset aligned to anchors\"}");
+  writer.writeString(writer.meta_group, "anchor_context_coverage_bits_source", coverage_bits_source);
+  writer.writeScalarValue<int8_t>(writer.meta_group, "anchor_context_coverage_bits_exact", H5T_STD_I8LE,
+                                  coverage_bits_exact ? 1 : 0);
+  writer.writeScalarValue<uint64_t>(writer.meta_group, "anchor_context_coverage_bits_count", H5T_STD_U64LE,
+                                    static_cast<uint64_t>(coverage_bit_count));
 
   if (cfg.anchor_only)
   {
-    writer.writeScalar(writer.meta_group, "anchor_only", H5T_STD_I8LE, 1);
+    writer.writeArray(writer.anchors_group, "full_reachable", H5T_STD_U8LE,
+                      { anchor_full_reachable.size() }, anchor_full_reachable.data());
+    writer.writeScalarValue<int8_t>(writer.meta_group, "anchor_only", H5T_STD_I8LE, 1);
     RCLCPP_INFO(logger, "Anchor-only mode enabled. Wrote anchors to %s", cfg.output_path.c_str());
+    writer.close();
     H5Fclose(base_file);
-    rclcpp::shutdown();
-    return 0;
+    std::fflush(stdout);
+    std::fflush(stderr);
+    std::_Exit(0);
   }
 
   std::vector<uint64_t> anchor_start;
+  std::vector<uint64_t> cell_anchor_start;
   anchor_start.reserve(anchors.size() + 1);
+  cell_anchor_start.reserve(anchors.size() + 1);
   anchor_start.push_back(0);
+  cell_anchor_start.push_back(0);
   if (cfg.write_csr && cfg.stream_csr)
   {
     writer.appendAnchorStart(0);
@@ -2177,9 +2833,17 @@ int main(int argc, char** argv)
       writer.flush();
     }
   }
+  if (cfg.write_cells)
+  {
+    writer.appendCellAnchorStart(0);
+  }
 
   auto readSeeds = [&](uint64_t voxel_idx) -> std::vector<Seed> {
     std::vector<Seed> seeds;
+    if (!has_seed_csr)
+    {
+      return seeds;
+    }
     if (voxel_idx + 1 >= voxel_start.size())
     {
       return seeds;
@@ -2279,49 +2943,84 @@ int main(int argc, char** argv)
     return out;
   };
 
-  auto build_edges = [&](const KNNGraph& graph, const std::vector<int8_t>& labels, size_t n_used, double d_max) {
-    struct Edge
+  auto cell_sign = [](So3CellState state) -> int {
+    if (state == So3CellState::kInside)
     {
-      int i;
-      int j;
-      float dist;
-    };
-    std::vector<Edge> edges;
-    edges.reserve(n_used * static_cast<size_t>(graph.k));
-    std::unordered_set<uint64_t> seen;
-    for (size_t i = 0; i < n_used; ++i)
+      return 1;
+    }
+    if (state == So3CellState::kOutside)
     {
-      for (int t = 0; t < graph.k; ++t)
+      return -1;
+    }
+    return 0;
+  };
+
+  auto certify_cell = [&](So3Cell& cell, const Eigen::Vector3d& pos, const std::vector<Seed>& seeds,
+                          const std::vector<So3Cell>& all_cells, ThreadContext& ctx, int csr_trials,
+                          int random_trials, double timeout) {
+    std::vector<Seed> eval_seeds = seeds;
+    if (cell.parent >= 0)
+    {
+      const auto& parent = all_cells[static_cast<size_t>(cell.parent)];
+      if (parent.has_center_joint)
       {
-        const int j = graph.neighbors[i][static_cast<size_t>(t)];
-        if (j < 0 || static_cast<size_t>(j) >= n_used)
-        {
-          continue;
-        }
-        if (labels[i] == labels[static_cast<size_t>(j)])
-        {
-          continue;
-        }
-        const float dist = graph.distances[i][static_cast<size_t>(t)];
-        if (dist > d_max)
-        {
-          continue;
-        }
-        const uint32_t a = static_cast<uint32_t>(std::min(static_cast<int>(i), j));
-        const uint32_t b = static_cast<uint32_t>(std::max(static_cast<int>(i), j));
-        const uint64_t key = (static_cast<uint64_t>(a) << 32) | b;
-        if (seen.insert(key).second)
-        {
-          edges.push_back({ static_cast<int>(a), static_cast<int>(b), dist });
-        }
+        Seed parent_seed;
+        parent_seed.quat = parent.center;
+        parent_seed.joint = parent.center_joint;
+        eval_seeds.push_back(parent_seed);
       }
     }
-    std::sort(edges.begin(), edges.end(), [](const Edge& a, const Edge& b) { return a.dist < b.dist; });
-    if (edges.size() > cfg.max_boundary_edges)
+
+    const double rho = std::max(1e-6, cell.radius * cfg.so3_stencil_radius_ratio);
+    cell.stencil_quat = makeStencil(cell.center, rho);
+    int pos_count = 0;
+    int neg_count = 0;
+    cell.has_center_joint = false;
+    cell.center_joint.clear();
+    for (size_t si = 0; si < cell.stencil_quat.size(); ++si)
     {
-      edges.resize(cfg.max_boundary_edges);
+      std::vector<double> solution(joint_count, 0.0);
+      const bool ok = evaluateIK(pos, cell.stencil_quat[si], cfg.ee_link, ctx, eval_seeds, cfg.warm_start_mix,
+                                 csr_trials, random_trials, timeout, solution);
+      if (ok)
+      {
+        cell.stencil_label[si] = 1;
+        cell.stencil_joint[si] = solution;
+        ++pos_count;
+        Seed local_seed;
+        local_seed.quat = cell.stencil_quat[si];
+        local_seed.joint = solution;
+        eval_seeds.push_back(local_seed);
+        if (si == 0)
+        {
+          cell.center_joint = solution;
+          cell.has_center_joint = true;
+        }
+      }
+      else
+      {
+        cell.stencil_label[si] = -1;
+        cell.stencil_joint[si].clear();
+        ++neg_count;
+      }
     }
-    return edges;
+
+    if (pos_count == static_cast<int>(cell.stencil_label.size()))
+    {
+      cell.state = So3CellState::kInside;
+    }
+    else if (neg_count == static_cast<int>(cell.stencil_label.size()))
+    {
+      cell.state = So3CellState::kOutside;
+    }
+    else if (pos_count > 0 && neg_count > 0)
+    {
+      cell.state = So3CellState::kMixed;
+    }
+    else
+    {
+      cell.state = So3CellState::kUnknown;
+    }
   };
 
   for (size_t ai = 0; ai < anchors.size(); ++ai)
@@ -2329,6 +3028,7 @@ int main(int argc, char** argv)
     if (ai < anchor_selected.size() && anchor_selected[ai] == 0)
     {
       anchor_start.push_back(writer.sample_count);
+      cell_anchor_start.push_back(writer.cell_count);
       if (cfg.write_csr && cfg.stream_csr)
       {
         writer.appendAnchorStart(writer.sample_count);
@@ -2336,6 +3036,10 @@ int main(int argc, char** argv)
         {
           writer.flush();
         }
+      }
+      if (cfg.write_cells)
+      {
+        writer.appendCellAnchorStart(writer.cell_count);
       }
       continue;
     }
@@ -2347,7 +3051,8 @@ int main(int argc, char** argv)
     if (seeds.size() < static_cast<size_t>(cfg.seeds_per_anchor))
     {
       const size_t missing = static_cast<size_t>(cfg.seeds_per_anchor) - seeds.size();
-      auto extra = generateRandomSeeds(missing, 9001 + static_cast<int>(ai) * 17);
+      auto extra = generateRandomSeeds(
+          missing, toRosRngSeed(cfg.fallback_seed_base + static_cast<uint64_t>(ai) * cfg.fallback_seed_stride));
       seeds.insert(seeds.end(), extra.begin(), extra.end());
     }
     seeds = selectFarthestSeeds(seeds, cfg.seeds_per_anchor);
@@ -2355,40 +3060,37 @@ int main(int argc, char** argv)
     {
       RCLCPP_WARN(logger, "Anchor %zu has no seeds; skipping.", ai);
       anchor_start.push_back(writer.sample_count);
+      cell_anchor_start.push_back(writer.cell_count);
+      if (cfg.write_cells)
+      {
+        writer.appendCellAnchorStart(writer.cell_count);
+      }
       continue;
     }
 
-    SampleSet local_min;
-    SampleSet local_max;
-    const SampleSet* set_min = &precomp_min;
-    const SampleSet* set_max = &precomp_max;
-    if (cfg.scramble_per_anchor)
+    std::vector<So3Cell> cells;
+    cells.reserve(static_cast<size_t>(so3_base_cells) * 2);
+    std::vector<int> current;
+    current.reserve(base_quats.size());
+    for (const auto& q : base_quats)
     {
-      const uint64_t seed = cfg.sobol_seed + static_cast<uint64_t>(ai) + 1;
-      local_max.quats = generateSobolQuats(static_cast<size_t>(coarse_max), seed, false);
-      local_max.knn = buildKNNGraph(local_max.quats, cfg.knn_k, thread_count);
-      if (coarse_min != coarse_max)
-      {
-        local_min.quats.assign(local_max.quats.begin(), local_max.quats.begin() + static_cast<long>(coarse_min));
-        local_min.knn = buildKNNGraph(local_min.quats, cfg.knn_k, thread_count);
-      }
-      else
-      {
-        local_min = local_max;
-      }
-      set_min = &local_min;
-      set_max = &local_max;
+      So3Cell cell;
+      cell.parent = -1;
+      cell.level = 0;
+      cell.radius = base_radius;
+      cell.center = canonicalizeQuat(q);
+      cells.push_back(cell);
+      current.push_back(static_cast<int>(cells.size() - 1));
     }
 
-    size_t n_used = static_cast<size_t>(coarse_min);
-    const SampleSet* samples = set_min;
-
-    std::vector<OrientationSample> all_samples(n_used);
-    std::vector<int8_t> labels(n_used, 0);
-
-    auto eval_range = [&](size_t start, size_t end) {
-#pragma omp parallel for schedule(static)
-      for (int i = static_cast<int>(start); i < static_cast<int>(end); ++i)
+    std::vector<int> leaf_ids;
+    for (int level = 0; level <= so3_max_depth && !current.empty(); ++level)
+    {
+      const int csr_trials = level == 0 ? cfg.ik_csr_trials_coarse : cfg.ik_csr_trials_refine;
+      const int random_trials = level == 0 ? cfg.ik_random_trials_coarse : cfg.ik_random_trials_refine;
+      const double timeout = level == 0 ? cfg.ik_timeout_coarse : cfg.ik_timeout_refine;
+#pragma omp parallel for schedule(dynamic)
+      for (int ci = 0; ci < static_cast<int>(current.size()); ++ci)
       {
         const int tid = 0
 #ifdef _OPENMP
@@ -2396,84 +3098,143 @@ int main(int argc, char** argv)
 #endif
             ;
         auto& ctx = thread_contexts[static_cast<size_t>(tid)];
-        std::vector<double> solution(joint_count, 0.0);
-        const bool ok = evaluateIK(pos, samples->quats[static_cast<size_t>(i)], cfg.ee_link, jmg, scene, request, ctx,
-                                   seeds, cfg.warm_start_mix, cfg.ik_csr_trials, cfg.ik_random_trials, cfg.ik_timeout,
-                                   solution);
-        all_samples[static_cast<size_t>(i)].quat = samples->quats[static_cast<size_t>(i)];
-        all_samples[static_cast<size_t>(i)].reachable = ok;
-        labels[static_cast<size_t>(i)] = ok ? 1 : -1;
-        if (ok)
+        certify_cell(cells[static_cast<size_t>(current[static_cast<size_t>(ci)])], pos, seeds, cells, ctx,
+                     csr_trials, random_trials, timeout);
+      }
+
+      size_t level_inside = 0;
+      size_t level_outside = 0;
+      size_t level_mixed = 0;
+      size_t level_unknown = 0;
+      size_t refine_count = 0;
+      for (int idx : current)
+      {
+        const So3Cell& cell = cells[static_cast<size_t>(idx)];
+        if (cell.state == So3CellState::kInside)
         {
-          all_samples[static_cast<size_t>(i)].joint = solution;
+          ++level_inside;
+        }
+        else if (cell.state == So3CellState::kOutside)
+        {
+          ++level_outside;
+        }
+        else if (cell.state == So3CellState::kMixed)
+        {
+          ++level_mixed;
         }
         else
         {
-          all_samples[static_cast<size_t>(i)].joint.clear();
+          ++level_unknown;
+        }
+        const bool should_refine =
+            (cell.state == So3CellState::kMixed || cell.state == So3CellState::kUnknown) &&
+            cell.level < static_cast<uint8_t>(so3_max_depth) && cell.radius > cfg.so3_leaf_radius;
+        if (should_refine)
+        {
+          ++refine_count;
         }
       }
-    };
+      RCLCPP_INFO(logger,
+                  "Anchor %zu level %d: current=%zu inside=%zu outside=%zu mixed=%zu unknown=%zu refine=%zu "
+                  "leaf_so_far=%zu total_cells=%zu",
+                  ai, level, current.size(), level_inside, level_outside, level_mixed, level_unknown, refine_count,
+                  leaf_ids.size(), cells.size());
 
-    eval_range(0, n_used);
-
-    double d_max_used = resolveDmax(cfg, samples->knn);
-    auto edges = build_edges(samples->knn, labels, n_used, d_max_used);
-
-    if (edges.size() < cfg.min_boundary_edges && coarse_max > coarse_min)
-    {
-      RCLCPP_INFO(logger, "Anchor %zu: boundary edges %zu < %zu, extending to %d samples", ai, edges.size(),
-                  cfg.min_boundary_edges, coarse_max);
-      samples = set_max;
-      const size_t old_used = n_used;
-      n_used = static_cast<size_t>(coarse_max);
-      all_samples.resize(n_used);
-      labels.resize(n_used, 0);
-      eval_range(old_used, n_used);
-      d_max_used = resolveDmax(cfg, samples->knn);
-      edges = build_edges(samples->knn, labels, n_used, d_max_used);
+      std::vector<int> next;
+      next.reserve(refine_count * 8);
+      cells.reserve(cells.size() + refine_count * 8);
+      for (int idx : current)
+      {
+        const So3Cell& cell = cells[static_cast<size_t>(idx)];
+        const bool should_refine =
+            (cell.state == So3CellState::kMixed || cell.state == So3CellState::kUnknown) &&
+            cell.level < static_cast<uint8_t>(so3_max_depth) && cell.radius > cfg.so3_leaf_radius;
+        if (!should_refine)
+        {
+          leaf_ids.push_back(idx);
+          continue;
+        }
+        const uint8_t parent_level = cell.level;
+        const double parent_radius = cell.radius;
+        const Eigen::Quaterniond parent_center = cell.center;
+        const double child_radius = 0.5 * parent_radius;
+        const double offset = parent_radius / (2.0 * std::sqrt(3.0));
+        for (int sx : { -1, 1 })
+        {
+          for (int sy : { -1, 1 })
+          {
+            for (int sz : { -1, 1 })
+            {
+              So3Cell child;
+              child.parent = idx;
+              child.level = static_cast<uint8_t>(parent_level + 1);
+              child.radius = child_radius;
+              child.center =
+                  offsetQuat(parent_center, Eigen::Vector3d(static_cast<double>(sx) * offset,
+                                                            static_cast<double>(sy) * offset,
+                                                            static_cast<double>(sz) * offset));
+              cells.push_back(child);
+              next.push_back(static_cast<int>(cells.size() - 1));
+            }
+          }
+        }
+      }
+      current.swap(next);
     }
 
-    std::vector<OrientationSample> pos_samples;
-    std::vector<OrientationSample> neg_samples;
-    pos_samples.reserve(n_used);
-    neg_samples.reserve(n_used);
-    for (size_t i = 0; i < n_used; ++i)
-    {
-      if (labels[i] == 1)
+    std::sort(leaf_ids.begin(), leaf_ids.end(), [&](int lhs, int rhs) {
+      const So3Cell& a = cells[static_cast<size_t>(lhs)];
+      const So3Cell& b = cells[static_cast<size_t>(rhs)];
+      if (a.radius != b.radius)
       {
-        pos_samples.push_back(all_samples[i]);
+        return a.radius > b.radius;
+      }
+      return lhs < rhs;
+    });
+
+    size_t leaf_inside = 0;
+    size_t leaf_outside = 0;
+    size_t leaf_mixed = 0;
+    size_t leaf_unknown = 0;
+    for (const int leaf_id : leaf_ids)
+    {
+      const auto state = cells[static_cast<size_t>(leaf_id)].state;
+      if (state == So3CellState::kInside)
+      {
+        ++leaf_inside;
+      }
+      else if (state == So3CellState::kOutside)
+      {
+        ++leaf_outside;
+      }
+      else if (state == So3CellState::kMixed)
+      {
+        ++leaf_mixed;
       }
       else
       {
-        neg_samples.push_back(all_samples[i]);
+        ++leaf_unknown;
       }
     }
 
-    if (pos_samples.empty() || neg_samples.empty())
+    const bool full_reachable_candidate =
+        !leaf_ids.empty() && leaf_outside == 0 && leaf_mixed == 0 && leaf_unknown == 0 && leaf_inside == leaf_ids.size();
+    std::vector<BoundaryBracket> validation_brackets;
+    bool full_reachable = full_reachable_candidate;
+    if (full_reachable_candidate && cfg.full_reachable_validation_samples > 0)
     {
-      RCLCPP_WARN(logger, "Anchor %zu has insufficient pos/neg samples (pos=%zu neg=%zu).", ai, pos_samples.size(),
-                  neg_samples.size());
-    }
-
-    std::vector<OutputSample> output_samples;
-    std::vector<Eigen::Quaterniond> boundary_quats;
-
-    if (!edges.empty())
-    {
-      const size_t log_step = std::max<size_t>(1, edges.size() / 5);
-      std::atomic<size_t> processed{ 0 };
-      std::atomic<size_t> next_log{ log_step };
-      std::vector<std::vector<OutputSample>> output_local(static_cast<size_t>(thread_count));
-      std::vector<std::vector<Eigen::Quaterniond>> boundary_local(static_cast<size_t>(thread_count));
-      std::vector<random_numbers::RandomNumberGenerator> refine_rngs;
-      refine_rngs.reserve(static_cast<size_t>(thread_count));
-      for (int t = 0; t < thread_count; ++t)
+      const size_t probe_count = static_cast<size_t>(cfg.full_reachable_validation_samples);
+      std::vector<Eigen::Quaterniond> validation_quats;
+      validation_quats.reserve(probe_count);
+      std::mt19937_64 rng(full_validation_seed_base + static_cast<uint64_t>(ai + 1) * 0x9e3779b97f4a7c15ULL);
+      for (size_t i = 0; i < probe_count; ++i)
       {
-        refine_rngs.emplace_back(7001 + static_cast<int>(ai) * 101 + t * 11);
+        validation_quats.push_back(sampleUniformQuaternion(rng));
       }
 
+      std::vector<uint8_t> validation_ok(probe_count, 0);
 #pragma omp parallel for schedule(dynamic)
-      for (int e = 0; e < static_cast<int>(edges.size()); ++e)
+      for (int pi = 0; pi < static_cast<int>(probe_count); ++pi)
       {
         const int tid = 0
 #ifdef _OPENMP
@@ -2481,47 +3242,408 @@ int main(int argc, char** argv)
 #endif
             ;
         auto& ctx = thread_contexts[static_cast<size_t>(tid)];
-        auto& rng = refine_rngs[static_cast<size_t>(tid)];
+        std::vector<double> solution(joint_count, 0.0);
+        const bool ok =
+            evaluateIK(pos, validation_quats[static_cast<size_t>(pi)], cfg.ee_link, ctx, seeds, cfg.warm_start_mix,
+                       cfg.ik_csr_trials_bisect, cfg.ik_random_trials_bisect, cfg.ik_timeout_bisect, solution);
+        validation_ok[static_cast<size_t>(pi)] = ok ? 1 : 0;
+      }
+
+      size_t failed = 0;
+      for (size_t pi = 0; pi < probe_count; ++pi)
+      {
+        if (validation_ok[pi] != 0)
+        {
+          continue;
+        }
+        ++failed;
+        double best = std::numeric_limits<double>::infinity();
+        int best_leaf = -1;
+        for (const int leaf_id : leaf_ids)
+        {
+          const So3Cell& cell = cells[static_cast<size_t>(leaf_id)];
+          if (!cell.has_center_joint)
+          {
+            continue;
+          }
+          const double d = geodesicDistance(cell.center, validation_quats[pi]);
+          if (d < best)
+          {
+            best = d;
+            best_leaf = leaf_id;
+          }
+        }
+        if (best_leaf >= 0)
+        {
+          const So3Cell& pos_cell = cells[static_cast<size_t>(best_leaf)];
+          BoundaryBracket bracket;
+          bracket.q_pos = pos_cell.center;
+          bracket.q_neg = validation_quats[pi];
+          bracket.pos_joint = pos_cell.center_joint;
+          validation_brackets.push_back(std::move(bracket));
+        }
+      }
+
+      if (failed > 0)
+      {
+        full_reachable = false;
+      }
+      RCLCPP_INFO(logger,
+                  "Anchor %zu full validation: probes=%zu failed=%zu validation_brackets=%zu candidate=%s final=%s",
+                  ai, probe_count, failed, validation_brackets.size(), full_reachable_candidate ? "yes" : "no",
+                  full_reachable ? "full" : "regular");
+    }
+    if (full_reachable)
+    {
+      anchor_full_reachable[ai] = 1;
+
+      std::vector<CellOutput> cell_outputs;
+      cell_outputs.reserve(leaf_ids.size());
+      const size_t bucket_count = std::max<size_t>(size_t{ 1 }, q_ref.size());
+      std::vector<std::vector<int>> full_buckets(bucket_count);
+      for (const int leaf_id : leaf_ids)
+      {
+        const So3Cell& cell = cells[static_cast<size_t>(leaf_id)];
+        CellOutput co;
+        co.quat = canonicalizeQuat(cell.center);
+        co.level = cell.level;
+        co.state = static_cast<uint8_t>(cell.state);
+        co.phi_graph = std::numeric_limits<float>::quiet_NaN();
+        cell_outputs.push_back(co);
+        full_buckets[q_ref_bucket(cell.center)].push_back(leaf_id);
+      }
+
+      std::vector<OutputSample> output_samples;
+      output_samples.reserve(leaf_inside);
+      std::vector<size_t> bucket_cursor(bucket_count, 0);
+      size_t remaining = leaf_inside;
+      while (remaining > 0)
+      {
+        bool progressed = false;
+        for (size_t b = 0; b < bucket_count; ++b)
+        {
+          if (bucket_cursor[b] >= full_buckets[b].size())
+          {
+            continue;
+          }
+          const int leaf_id = full_buckets[b][bucket_cursor[b]++];
+          const So3Cell& cell = cells[static_cast<size_t>(leaf_id)];
+          OutputSample o;
+          o.quat = canonicalizeQuat(cell.center);
+          o.phi = static_cast<float>(cfg.phi_full);
+          o.label = 1;
+          o.method = 4;
+          if (cell.has_center_joint)
+          {
+            o.joint.assign(cell.center_joint.begin(), cell.center_joint.end());
+          }
+          output_samples.push_back(std::move(o));
+          --remaining;
+          progressed = true;
+        }
+        if (!progressed)
+        {
+          break;
+        }
+      }
+
+      if (!writer.appendCells(cell_outputs))
+      {
+        RCLCPP_ERROR(logger, "Failed to append cells for full-reachable anchor %zu", ai);
+        writer.close();
+        H5Fclose(base_file);
+        rclcpp::shutdown();
+        return 1;
+      }
+      if (!writer.appendSamples(output_samples))
+      {
+        RCLCPP_ERROR(logger, "Failed to append full-positive samples for anchor %zu", ai);
+        writer.close();
+        H5Fclose(base_file);
+        rclcpp::shutdown();
+        return 1;
+      }
+
+      anchor_start.push_back(writer.sample_count);
+      cell_anchor_start.push_back(writer.cell_count);
+      if (cfg.write_csr && cfg.stream_csr)
+      {
+        writer.appendAnchorStart(writer.sample_count);
+        if (cfg.flush_per_anchor)
+        {
+          writer.flush();
+        }
+      }
+      if (cfg.write_cells)
+      {
+        writer.appendCellAnchorStart(writer.cell_count);
+      }
+      RCLCPP_INFO(logger,
+                  "Anchor %zu full-reachable: leaves=%zu method4=%zu phi_full=%.6f (no boundary/shell/global)",
+                  ai, leaf_ids.size(), output_samples.size(), cfg.phi_full);
+      continue;
+    }
+
+    const double graph_grid_cell = std::max(0.08, 4.0 * cfg.so3_leaf_radius);
+    const double inv_graph_grid_cell = 1.0 / graph_grid_cell;
+    auto grid_key = [&](const Eigen::Quaterniond& q) -> QuatGridKey {
+      return { static_cast<int>(std::floor(q.x() * inv_graph_grid_cell)),
+               static_cast<int>(std::floor(q.y() * inv_graph_grid_cell)),
+               static_cast<int>(std::floor(q.z() * inv_graph_grid_cell)),
+               static_cast<int>(std::floor(q.w() * inv_graph_grid_cell)) };
+    };
+
+    std::unordered_map<QuatGridKey, std::vector<int>, QuatGridKeyHash> graph_buckets;
+    graph_buckets.reserve(leaf_ids.size() * 2);
+    for (size_t i = 0; i < leaf_ids.size(); ++i)
+    {
+      const So3Cell& cell = cells[static_cast<size_t>(leaf_ids[i])];
+      graph_buckets[grid_key(cell.center)].push_back(static_cast<int>(i));
+    }
+
+    std::vector<std::vector<std::pair<int, float>>> leaf_graph(leaf_ids.size());
+    size_t graph_edges = 0;
+    for (size_t i = 0; i < leaf_ids.size(); ++i)
+    {
+      const So3Cell& a = cells[static_cast<size_t>(leaf_ids[i])];
+      const QuatGridKey base_key = grid_key(a.center);
+      const double max_d = std::min(M_PI, 2.5 * a.radius);
+      const double max_chord = std::sqrt(std::max(0.0, 2.0 - 2.0 * std::cos(0.5 * max_d)));
+      const int range = std::max(1, static_cast<int>(std::ceil(max_chord * inv_graph_grid_cell)));
+      for (int dx = -range; dx <= range; ++dx)
+      {
+        for (int dy = -range; dy <= range; ++dy)
+        {
+          for (int dz = -range; dz <= range; ++dz)
+          {
+            for (int dw = -range; dw <= range; ++dw)
+            {
+              const QuatGridKey key{ base_key.x + dx, base_key.y + dy, base_key.z + dz, base_key.w + dw };
+              const auto bucket_it = graph_buckets.find(key);
+              if (bucket_it == graph_buckets.end())
+              {
+                continue;
+              }
+              for (const int j_int : bucket_it->second)
+              {
+                const size_t j = static_cast<size_t>(j_int);
+                if (j <= i)
+                {
+                  continue;
+                }
+                const So3Cell& b = cells[static_cast<size_t>(leaf_ids[j])];
+                const double d = geodesicDistance(a.center, b.center);
+                const double threshold = 1.25 * (a.radius + b.radius);
+                if (d <= threshold)
+                {
+                  leaf_graph[i].push_back({ static_cast<int>(j), static_cast<float>(d) });
+                  leaf_graph[j].push_back({ static_cast<int>(i), static_cast<float>(d) });
+                  ++graph_edges;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    RCLCPP_INFO(logger, "Anchor %zu graph: leaves=%zu edges=%zu grid_cell=%.4f", ai, leaf_ids.size(), graph_edges,
+                graph_grid_cell);
+
+    std::vector<OutputSample> output_samples;
+    std::vector<CellOutput> cell_outputs;
+    std::vector<Eigen::Quaterniond> boundary_quats;
+    std::vector<BoundaryBracket> brackets = std::move(validation_brackets);
+    std::vector<uint8_t> certified(leaf_ids.size(), 0);
+    std::vector<uint8_t> boundary_source(leaf_ids.size(), 0);
+
+    for (size_t i = 0; i < leaf_ids.size(); ++i)
+    {
+      const int sign_i = cell_sign(cells[static_cast<size_t>(leaf_ids[i])].state);
+      certified[i] = sign_i == 0 ? 0 : 1;
+      if (cells[static_cast<size_t>(leaf_ids[i])].state == So3CellState::kMixed)
+      {
+        double best = std::numeric_limits<double>::infinity();
+        int best_pos = -1;
+        int best_neg = -1;
+        const auto& cell = cells[static_cast<size_t>(leaf_ids[i])];
+        for (size_t a = 0; a < cell.stencil_label.size(); ++a)
+        {
+          if (cell.stencil_label[a] != 1)
+          {
+            continue;
+          }
+          for (size_t b = 0; b < cell.stencil_label.size(); ++b)
+          {
+            if (cell.stencil_label[b] != -1)
+            {
+              continue;
+            }
+            const double d = geodesicDistance(cell.stencil_quat[a], cell.stencil_quat[b]);
+            if (d < best)
+            {
+              best = d;
+              best_pos = static_cast<int>(a);
+              best_neg = static_cast<int>(b);
+            }
+          }
+        }
+        if (best_pos >= 0 && best_neg >= 0)
+        {
+          BoundaryBracket bracket;
+          bracket.q_pos = cell.stencil_quat[static_cast<size_t>(best_pos)];
+          bracket.q_neg = cell.stencil_quat[static_cast<size_t>(best_neg)];
+          bracket.pos_joint = cell.stencil_joint[static_cast<size_t>(best_pos)];
+          brackets.push_back(bracket);
+        }
+      }
+    }
+
+    for (size_t i = 0; i < leaf_ids.size(); ++i)
+    {
+      const int sign_i = cell_sign(cells[static_cast<size_t>(leaf_ids[i])].state);
+      for (const auto& [j_int, dist] : leaf_graph[i])
+      {
+        const size_t j = static_cast<size_t>(j_int);
+        if (j <= i)
+        {
+          continue;
+        }
+        const int sign_j = cell_sign(cells[static_cast<size_t>(leaf_ids[j])].state);
+        if (sign_i != 0 && sign_j != 0 && sign_i != sign_j)
+        {
+          const bool i_pos = sign_i > 0;
+          const So3Cell& pos_cell = cells[static_cast<size_t>(leaf_ids[i_pos ? i : j])];
+          const So3Cell& neg_cell = cells[static_cast<size_t>(leaf_ids[i_pos ? j : i])];
+          if (pos_cell.has_center_joint)
+          {
+            BoundaryBracket bracket;
+            bracket.q_pos = pos_cell.center;
+            bracket.q_neg = neg_cell.center;
+            bracket.pos_joint = pos_cell.center_joint;
+            brackets.push_back(bracket);
+          }
+          boundary_source[i] = 1;
+          boundary_source[j] = 1;
+        }
+        else if (sign_i != 0 || sign_j != 0)
+        {
+          const So3CellState state_i = cells[static_cast<size_t>(leaf_ids[i])].state;
+          const So3CellState state_j = cells[static_cast<size_t>(leaf_ids[j])].state;
+          if (state_i == So3CellState::kMixed || state_j == So3CellState::kMixed)
+          {
+            if (sign_i != 0)
+            {
+              boundary_source[i] = 1;
+            }
+            if (sign_j != 0)
+            {
+              boundary_source[j] = 1;
+            }
+          }
+        }
+      }
+    }
+
+    const size_t bracket_count_before_budget = brackets.size();
+    if (cfg.max_boundary_brackets > 0 && brackets.size() > static_cast<size_t>(cfg.max_boundary_brackets))
+    {
+      const size_t limit = static_cast<size_t>(cfg.max_boundary_brackets);
+      std::vector<BoundaryBracket> budgeted;
+      budgeted.reserve(limit);
+      for (size_t k = 0; k < limit; ++k)
+      {
+        const size_t idx =
+            limit == 1 ? 0 : static_cast<size_t>((static_cast<unsigned long long>(k) * (brackets.size() - 1)) /
+                                                 static_cast<unsigned long long>(limit - 1));
+        budgeted.push_back(brackets[idx]);
+      }
+      brackets.swap(budgeted);
+    }
+    RCLCPP_INFO(logger, "Anchor %zu brackets: %zu%s refine_steps=%d", ai, bracket_count_before_budget,
+                brackets.size() == bracket_count_before_budget ? "" : " (budgeted)", cfg.boundary_refine_steps);
+
+    if (!brackets.empty())
+    {
+      std::vector<std::vector<OutputSample>> output_local(static_cast<size_t>(thread_count));
+      std::vector<std::vector<Eigen::Quaterniond>> boundary_local(static_cast<size_t>(thread_count));
+#pragma omp parallel for schedule(dynamic)
+      for (int bi = 0; bi < static_cast<int>(brackets.size()); ++bi)
+      {
+        const int tid = 0
+#ifdef _OPENMP
+                        + omp_get_thread_num()
+#endif
+            ;
+        auto& ctx = thread_contexts[static_cast<size_t>(tid)];
         auto& out = output_local[static_cast<size_t>(tid)];
         auto& bq = boundary_local[static_cast<size_t>(tid)];
-        const auto& edge = edges[static_cast<size_t>(e)];
+        const BoundaryBracket& bracket = brackets[static_cast<size_t>(bi)];
 
-        const int idx_a = edge.i;
-        const int idx_b = edge.j;
-        const bool a_pos = labels[static_cast<size_t>(idx_a)] == 1;
-        const int pos_idx = a_pos ? idx_a : idx_b;
-        const int neg_idx = a_pos ? idx_b : idx_a;
-
-        const Eigen::Quaterniond q_pos_far = all_samples[static_cast<size_t>(pos_idx)].quat;
-        const Eigen::Quaterniond q_neg_far = all_samples[static_cast<size_t>(neg_idx)].quat;
+        Eigen::Quaterniond q_pos_far = bracket.q_pos;
+        Eigen::Quaterniond q_neg_far = bracket.q_neg;
         Eigen::Quaterniond q_pos = q_pos_far;
         Eigen::Quaterniond q_neg = q_neg_far;
-        std::vector<double> q_pos_joint = all_samples[static_cast<size_t>(pos_idx)].joint;
-        std::vector<double> solution(joint_count, 0.0);
-
-        while (geodesicDistance(q_pos, q_neg) > cfg.delta_boundary)
+        std::vector<double> q_pos_joint = bracket.pos_joint;
+        std::vector<Seed> bisect_seeds = seeds;
+        if (!q_pos_joint.empty())
         {
+          Seed local_seed;
+          local_seed.quat = q_pos;
+          local_seed.joint = q_pos_joint;
+          bisect_seeds.push_back(local_seed);
+        }
+
+        auto refine_once = [&]() {
+          if (geodesicDistance(q_pos, q_neg) <= 1e-9)
+          {
+            return;
+          }
           const Eigen::Quaterniond q_mid = slerpShortest(q_pos, q_neg, 0.5);
-          const bool ok = evaluateIK(pos, q_mid, cfg.ee_link, jmg, scene, request, ctx, seeds, cfg.warm_start_mix,
-                                     cfg.bisect_csr_trials, cfg.bisect_random_trials, cfg.ik_timeout, solution);
+          std::vector<double> solution(joint_count, 0.0);
+          const bool ok =
+              evaluateIK(pos, q_mid, cfg.ee_link, ctx, bisect_seeds, cfg.warm_start_mix, cfg.ik_csr_trials_bisect,
+                         cfg.ik_random_trials_bisect, cfg.ik_timeout_bisect, solution);
           if (ok)
           {
             q_pos = q_mid;
             q_pos_joint = solution;
+            Seed local_seed;
+            local_seed.quat = q_mid;
+            local_seed.joint = solution;
+            bisect_seeds.push_back(local_seed);
           }
           else
           {
             q_neg = q_mid;
           }
+        };
+
+        if (cfg.boundary_refine_steps >= 0)
+        {
+          for (int step = 0; step < cfg.boundary_refine_steps; ++step)
+          {
+            refine_once();
+          }
+        }
+        else
+        {
+          while (geodesicDistance(q_pos, q_neg) > cfg.delta_boundary)
+          {
+            refine_once();
+          }
         }
 
-        const Eigen::Quaterniond q_star = q_pos;
+        const Eigen::Quaterniond q_star = slerpShortest(q_pos, q_neg, 0.5);
         bq.push_back(q_star);
         OutputSample boundary;
         boundary.quat = canonicalizeQuat(q_star);
         boundary.phi = 0.0f;
         boundary.label = 1;
         boundary.method = 2;
+        if (!q_pos_joint.empty())
+        {
+          boundary.joint.assign(q_pos_joint.begin(), q_pos_joint.end());
+        }
         out.push_back(boundary);
 
         const double d_pos = geodesicDistance(q_star, q_pos_far);
@@ -2531,131 +3653,29 @@ int main(int argc, char** argv)
           if (d_pos > 1e-9 && delta <= d_pos)
           {
             const double t = delta / d_pos;
-            Eigen::Quaterniond q_in = slerpShortest(q_star, q_pos_far, t);
             OutputSample s;
-            s.quat = canonicalizeQuat(q_in);
+            s.quat = canonicalizeQuat(slerpShortest(q_star, q_pos_far, t));
             s.phi = static_cast<float>(delta);
             s.label = 1;
             s.method = 0;
-            s.joint.assign(q_pos_joint.begin(), q_pos_joint.end());
+            if (!q_pos_joint.empty())
+            {
+              s.joint.assign(q_pos_joint.begin(), q_pos_joint.end());
+            }
             out.push_back(s);
           }
           if (d_neg > 1e-9 && delta <= d_neg)
           {
             const double t = delta / d_neg;
-            Eigen::Quaterniond q_out = slerpShortest(q_star, q_neg_far, t);
             OutputSample s;
-            s.quat = canonicalizeQuat(q_out);
+            s.quat = canonicalizeQuat(slerpShortest(q_star, q_neg_far, t));
             s.phi = static_cast<float>(-delta);
             s.label = -1;
             s.method = 1;
             out.push_back(s);
           }
         }
-
-        if (cfg.refine_count > 0)
-        {
-          for (int r = 0; r < cfg.refine_count; ++r)
-          {
-            const Eigen::Vector3d noise(rng.gaussian(0.0, cfg.refine_sigma), rng.gaussian(0.0, cfg.refine_sigma),
-                                        rng.gaussian(0.0, cfg.refine_sigma));
-            Eigen::Quaterniond dq = expMapSO3(noise);
-            Eigen::Quaterniond q_pert = dq * q_star;
-            q_pert.normalize();
-
-            std::vector<double> pert_solution(joint_count, 0.0);
-            const bool pert_ok =
-                evaluateIK(pos, q_pert, cfg.ee_link, jmg, scene, request, ctx, seeds, cfg.warm_start_mix,
-                           cfg.bisect_csr_trials, cfg.bisect_random_trials, cfg.ik_timeout, pert_solution);
-
-            const OrientationSample* opp =
-                pert_ok ? nearestSample(neg_samples, q_pert) : nearestSample(pos_samples, q_pert);
-            if (!opp)
-            {
-              continue;
-            }
-            if (geodesicDistance(q_pert, opp->quat) > d_max_used)
-            {
-              continue;
-            }
-
-            Eigen::Quaterniond pos_end = pert_ok ? q_pert : opp->quat;
-            Eigen::Quaterniond neg_end = pert_ok ? opp->quat : q_pert;
-            std::vector<double> pos_joint = pert_ok ? pert_solution : opp->joint;
-
-            Eigen::Quaterniond pos_local = pos_end;
-            Eigen::Quaterniond neg_local = neg_end;
-            std::vector<double> local_solution = pos_joint;
-
-            while (geodesicDistance(pos_local, neg_local) > cfg.delta_boundary)
-            {
-              const Eigen::Quaterniond q_mid = slerpShortest(pos_local, neg_local, 0.5);
-              std::vector<double> mid_solution(joint_count, 0.0);
-              const bool ok =
-                  evaluateIK(pos, q_mid, cfg.ee_link, jmg, scene, request, ctx, seeds, cfg.warm_start_mix,
-                             cfg.bisect_csr_trials, cfg.bisect_random_trials, cfg.ik_timeout, mid_solution);
-              if (ok)
-              {
-                pos_local = q_mid;
-                local_solution = mid_solution;
-              }
-              else
-              {
-                neg_local = q_mid;
-              }
-            }
-
-            const Eigen::Quaterniond q_star_ref = pos_local;
-            bq.push_back(q_star_ref);
-            OutputSample b;
-            b.quat = canonicalizeQuat(q_star_ref);
-            b.phi = 0.0f;
-            b.label = 1;
-            b.method = 2;
-            out.push_back(b);
-
-            const double d_pos_ref = geodesicDistance(q_star_ref, pos_end);
-            const double d_neg_ref = geodesicDistance(q_star_ref, neg_end);
-            for (double delta : cfg.shell_deltas)
-            {
-              if (d_pos_ref > 1e-9 && delta <= d_pos_ref)
-              {
-                const double t = delta / d_pos_ref;
-                Eigen::Quaterniond q_in = slerpShortest(q_star_ref, pos_end, t);
-                OutputSample s;
-                s.quat = canonicalizeQuat(q_in);
-                s.phi = static_cast<float>(delta);
-                s.label = 1;
-                s.method = 0;
-                s.joint.assign(local_solution.begin(), local_solution.end());
-                out.push_back(s);
-              }
-              if (d_neg_ref > 1e-9 && delta <= d_neg_ref)
-              {
-                const double t = delta / d_neg_ref;
-                Eigen::Quaterniond q_out = slerpShortest(q_star_ref, neg_end, t);
-                OutputSample s;
-                s.quat = canonicalizeQuat(q_out);
-                s.phi = static_cast<float>(-delta);
-                s.label = -1;
-                s.method = 1;
-                out.push_back(s);
-              }
-            }
-          }
-        }
-
-        const size_t done = processed.fetch_add(1) + 1;
-        size_t target = next_log.load();
-        if (done >= target)
-        {
-          if (next_log.compare_exchange_strong(target, target + log_step))
-          {
-            RCLCPP_INFO(logger, "Anchor %zu phase2/3 %zu/%zu", ai, done, edges.size());
-          }
-        }
       }
-
       for (int t = 0; t < thread_count; ++t)
       {
         boundary_quats.insert(boundary_quats.end(), boundary_local[static_cast<size_t>(t)].begin(),
@@ -2664,105 +3684,49 @@ int main(int argc, char** argv)
                               output_local[static_cast<size_t>(t)].end());
       }
     }
-    else
-    {
-      RCLCPP_WARN(logger, "Anchor %zu has no boundary edges after filtering.", ai);
-    }
 
-    double method3_min_phi = cfg.method3_min_abs_phi;
-    if (method3_min_phi <= 0.0)
+    size_t global_added = 0;
+    for (size_t li = 0; li < leaf_ids.size(); ++li)
     {
-      double max_shell = 0.0;
-      for (double d : cfg.shell_deltas)
+      So3Cell& cell = cells[static_cast<size_t>(leaf_ids[li])];
+      const int sign = cell_sign(cell.state);
+      if (sign != 0 && !boundary_quats.empty())
       {
-        max_shell = std::max(max_shell, d);
-      }
-      method3_min_phi = max_shell + cfg.delta_boundary + cfg.method3_phi_margin;
-    }
-
-    size_t coarse_added = 0;
-    std::vector<Eigen::Quaterniond> boundary_use = boundary_quats;
-    if (!boundary_use.empty() && cfg.method3_boundary_max > 0 &&
-        static_cast<int>(boundary_use.size()) > cfg.method3_boundary_max)
-    {
-      const int target = std::max(cfg.method3_boundary_min, cfg.method3_boundary_max);
-      std::vector<size_t> idx(boundary_use.size());
-      std::iota(idx.begin(), idx.end(), 0);
-      std::mt19937 rng(static_cast<uint32_t>(cfg.sobol_seed + 1337 + ai * 1013));
-      std::shuffle(idx.begin(), idx.end(), rng);
-      std::vector<Eigen::Quaterniond> reduced;
-      reduced.reserve(static_cast<size_t>(target));
-      for (int i = 0; i < target && i < static_cast<int>(idx.size()); ++i)
-      {
-        reduced.push_back(boundary_use[idx[static_cast<size_t>(i)]]);
-      }
-      boundary_use.swap(reduced);
-    }
-    if (boundary_use.empty())
-    {
-      RCLCPP_WARN(logger, "Anchor %zu has no boundary points; skip method=3 samples.", ai);
-    }
-    else
-    {
-      std::vector<Eigen::Vector4f> bvec;
-      bvec.reserve(boundary_use.size());
-      for (const auto& q : boundary_use)
-      {
-        Eigen::Quaterniond qc = q;
-        qc.normalize();
-        bvec.push_back(qc.coeffs().cast<float>());
-      }
-
-      std::vector<std::vector<OutputSample>> local_out(static_cast<size_t>(thread_count));
-#pragma omp parallel for schedule(static)
-      for (int i = 0; i < static_cast<int>(n_used); ++i)
-      {
-        const int tid = 0
-#ifdef _OPENMP
-                        + omp_get_thread_num()
-#endif
-            ;
-        const auto& qi = all_samples[static_cast<size_t>(i)].quat;
-        Eigen::Quaterniond qn = qi.normalized();
-        Eigen::Vector4f qv = qn.coeffs().cast<float>();
-        float best = -1.0f;
-        for (const auto& bq : bvec)
+        double abs_phi = std::numeric_limits<double>::infinity();
+        for (const auto& bq : boundary_quats)
         {
-          const float d = std::fabs(qv.dot(bq));
-          if (d > best)
-          {
-            best = d;
-          }
+          abs_phi = std::min(abs_phi, geodesicDistance(cell.center, bq));
         }
-        if (best < 0.0f)
-        {
-          continue;
-        }
-        best = std::min(1.0f, std::max(-1.0f, best));
-        const float dist = 2.0f * std::acos(best);
-        if (method3_min_phi > 0.0 && dist <= static_cast<float>(method3_min_phi))
-        {
-          continue;
-        }
+        cell.phi_graph = static_cast<float>(static_cast<double>(sign) * abs_phi);
         OutputSample o;
-        o.quat = canonicalizeQuat(qn);
-        o.label = labels[static_cast<size_t>(i)] == 1 ? 1 : -1;
+        o.quat = canonicalizeQuat(cell.center);
+        o.label = sign > 0 ? 1 : -1;
         o.method = 3;
-        o.phi = o.label > 0 ? dist : -dist;
-        if (o.label > 0)
+        o.phi = cell.phi_graph;
+        if (sign > 0 && cell.has_center_joint)
         {
-          o.joint.assign(all_samples[static_cast<size_t>(i)].joint.begin(),
-                         all_samples[static_cast<size_t>(i)].joint.end());
+          o.joint.assign(cell.center_joint.begin(), cell.center_joint.end());
         }
-        local_out[static_cast<size_t>(tid)].push_back(std::move(o));
+        output_samples.push_back(std::move(o));
+        ++global_added;
       }
-      for (auto& vec : local_out)
-      {
-        coarse_added += vec.size();
-        output_samples.insert(output_samples.end(), vec.begin(), vec.end());
-      }
+
+      CellOutput co;
+      co.quat = canonicalizeQuat(cell.center);
+      co.level = cell.level;
+      co.state = static_cast<uint8_t>(cell.state);
+      co.phi_graph = cell.phi_graph;
+      cell_outputs.push_back(co);
     }
 
+    if (!writer.appendCells(cell_outputs))
+    {
+      RCLCPP_ERROR(logger, "Failed to append cells for anchor %zu", ai);
+      writer.close();
+      H5Fclose(base_file);
+      rclcpp::shutdown();
+      return 1;
+    }
     if (!writer.appendSamples(output_samples))
     {
       RCLCPP_ERROR(logger, "Failed to append samples for anchor %zu", ai);
@@ -2773,6 +3737,7 @@ int main(int argc, char** argv)
     }
 
     anchor_start.push_back(writer.sample_count);
+    cell_anchor_start.push_back(writer.cell_count);
     if (cfg.write_csr && cfg.stream_csr)
     {
       writer.appendAnchorStart(writer.sample_count);
@@ -2781,9 +3746,16 @@ int main(int argc, char** argv)
         writer.flush();
       }
     }
-    RCLCPP_INFO(logger, "Anchor %zu done: boundary=%zu coarse=%zu total=%zu", ai, boundary_quats.size(),
-                coarse_added, output_samples.size());
+    if (cfg.write_cells)
+    {
+      writer.appendCellAnchorStart(writer.cell_count);
+    }
+    RCLCPP_INFO(logger, "Anchor %zu done: cells=%zu boundary=%zu global=%zu samples=%zu", ai, leaf_ids.size(),
+                boundary_quats.size(), global_added, output_samples.size());
   }
+
+  writer.writeArray(writer.anchors_group, "full_reachable", H5T_STD_U8LE,
+                    { anchor_full_reachable.size() }, anchor_full_reachable.data());
 
   if (cfg.write_csr && !cfg.stream_csr)
   {
@@ -2797,10 +3769,18 @@ int main(int argc, char** argv)
     writer.writeArray(writer.csr_group, "sample_index", H5T_STD_U64LE,
                       { static_cast<hsize_t>(sample_ids.size()) }, sample_ids.data());
   }
+  if (cfg.write_cells)
+  {
+    std::vector<uint64_t> cell_ids(writer.cell_count, 0);
+    std::iota(cell_ids.begin(), cell_ids.end(), 0);
+    writer.writeArray(writer.cells_csr_group, "cell_index", H5T_STD_U64LE,
+                      { static_cast<hsize_t>(cell_ids.size()) }, cell_ids.data());
+  }
 
   writer.close();
   H5Fclose(base_file);
   RCLCPP_INFO(logger, "Done. Output: %s", cfg.output_path.c_str());
-  rclcpp::shutdown();
-  return 0;
+  std::fflush(stdout);
+  std::fflush(stderr);
+  std::_Exit(0);
 }

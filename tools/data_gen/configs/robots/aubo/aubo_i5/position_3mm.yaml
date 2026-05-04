@@ -18,19 +18,27 @@ sampling:
   voxel_size: 0.003
   aabb_scale: 1.5
   aabb_samples: 20000
-  fk_samples: 500000000
-  fk_max_attempts: 500000000
-  random_seed: 42
-  fk_log_interval: 1000000
-  threads: 12
+  fk_samples: 1000000000
+  fk_max_attempts: 1000000000
+  random_seed: 20260428
+  joint_sequence: sobol_scrambled
+  fk_log_interval: 5000000
+  threads: 32
   orientation_bins: 64
-  coverage_check_interval: 1000000
+  voxel_reservoir_max: 8
+  coverage_check_interval: 5000000
   coverage_mode: heat
   coverage_delta_ratio: 0.01
   coverage_patience: 3
   coverage_min_occupied: 50000
   coverage_heat_min: 0.0005
   coverage_heat_alpha: 0.2
+  frontier_seed_trials: 8
+  frontier_targets_per_voxel: 4
+  frontier_jitter_seed: 2026042801
+  frontier_dls_steps: 8
+  frontier_dls_lambda: 0.02
+  frontier_max_passes: 4
 
 ik:
   attempts: 200

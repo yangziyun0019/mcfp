@@ -1,4 +1,4 @@
-# Aubo i5 orientation-dataset profile matched to the 3 mm position dataset.
+# Aubo i5 V1.3 orientation-SDF profile matched to the 3 mm position dataset.
 robot:
   name: aubo_i5
   urdf: src/robots/aubo/aubo_description/urdf/aubo_i5.urdf
@@ -18,7 +18,7 @@ input:
   base_h5: tools/data_gen/outputs/aubo/aubo_i5/voxel_3mm/dataset.h5
 
 anchors:
-  total: 4000
+  total: 1024
   candidate_min_count: 3
   bins_xyz: [8, 8, 8]
   min_quota_xyz: 1
@@ -37,37 +37,44 @@ anchors:
 
 sampling:
   seeds_per_anchor: 32
-  coarse_min: 8192
-  coarse_max: 16384
-  knn_k: 24
-  d_max_mode: adaptive
-  d_max_factor: 3.0
-  d_max_clip_min: 0.25
-  d_max_clip_max: 0.60
-  d_max: 0.40
+  so3_grid: hopf
+  so3_base_cells: 576
+  so3_split_factor: 8
+  so3_max_depth: 3
+  so3_leaf_radius: 0.04
+  so3_stencil_radius_ratio: 0.5
+  so3_refine_band: 0.08
   delta_boundary: 0.01
-  min_boundary_edges: 512
-  max_boundary_edges: 4096
-  shell_deltas: [0.005, 0.01, 0.02, 0.04, 0.08]
-  refine_count: 10
-  refine_sigma: 0.02
+  boundary_refine_steps: 2
+  max_boundary_brackets: 0
+  shell_deltas: [0.02, 0.04]
+  phi_full: 3.141592653589793
+  full_reachable_validation_samples: 1024
+  full_reachable_validation_seed: 20260429
   warm_start_mix: 0.7
-  scramble_per_anchor: false
-  sobol_seed: 0
   q_ref_size: 64
   q_ref_pool: 4096
-  method3_boundary_max: 0
-  method3_boundary_min: 0
-  # if <=0, use max(shell_deltas) + delta_boundary + method3_phi_margin
-  method3_min_abs_phi: 0.0
-  method3_phi_margin: 0.0
+  q_ref_seed: 20260428
+  anchor_quantile_seed: 2026042801
+  anchor_quota_seed_base: 2026042802
+  anchor_quota_seed_stride: 97
+  anchor_global_seed_base: 2026042803
+  anchor_global_seed_stride: 53
+  thread_seed_base: 2026042804
+  thread_seed_stride: 101
+  fallback_seed_base: 2026042805
+  fallback_seed_stride: 17
 
 ik:
-  timeout: 0.005
-  csr_trials: 2
-  random_trials: 1
-  bisect_csr_trials: 2
-  bisect_random_trials: 2
+  timeout_coarse: 0.005
+  csr_trials_coarse: 2
+  random_trials_coarse: 1
+  timeout_refine: 0.01
+  csr_trials_refine: 3
+  random_trials_refine: 2
+  timeout_bisect: 0.02
+  csr_trials_bisect: 4
+  random_trials_bisect: 4
   search_discretization: 0.005
 
 threads:
@@ -82,6 +89,7 @@ output:
   hdf5_chunk: 100000
   write_joint: true
   write_method: true
+  write_cells: true
   write_csr: true
   flush_per_anchor: true
   stream_csr: true
